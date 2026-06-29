@@ -54,13 +54,24 @@ if (-not $py) {
     Write-Warn "Python not found. Installing it for you (this may take a minute)..."
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
-        winget install --id Python.Python.3.12 --exact --silent `
+        winget install --id Python.Python.3.12 --exact --version 3.12.7 --silent `
             --accept-package-agreements --accept-source-agreements --scope user
     } else {
         Write-Warn "winget not available. Downloading the official Python installer..."
-        $tmp = Join-Path $env:TEMP "python-installer.exe"
+        # Random temp name closes the predictable-path TOCTOU swap window.
+        $tmp = Join-Path $env:TEMP ([guid]::NewGuid().ToString() + ".exe")
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe" -OutFile $tmp
+        # Verify the installer is Authenticode-signed by the Python Software Foundation
+        # before running it silently — refuse a tampered/unsigned binary.
+        $sig = Get-AuthenticodeSignature $tmp
+        if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Python Software Foundation") {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            Write-Warn "Python installer failed signature verification — aborting for your safety."
+            Write-Warn "Please install Python 3.12 manually from https://www.python.org and re-run this command."
+            return
+        }
         Start-Process -FilePath $tmp -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" -Wait
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     }
     Refresh-Path
     $py = Get-PythonCmd
@@ -110,6 +121,36 @@ try {
     elseif (Test-Path $launcher) { $sc.IconLocation = "$launcher,0" }
     $sc.Save()
     Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
+
+    # Second shortcut: silent background mode (no window at all — just drives the lightbar).
+    # Uses pythonw.exe (never a console) + --background (no Tk UI). Lightweight.
+    if (Test-Path $pyw) {
+        $bgLnk = Join-Path $desktop "DualLED Pro (Background).lnk"
+        $sb = $shell.CreateShortcut($bgLnk)
+        $sb.TargetPath       = $pyw
+        $sb.Arguments        = '"' + $AppFile + '" --background'
+        $sb.WorkingDirectory = $InstallDir
+        $sb.WindowStyle      = 7          # minimized; pythonw shows nothing anyway
+        $sb.Description       = "DualLED Pro - run silently in the background (no window)"
+        if (Test-Path $icoFile)      { $sb.IconLocation = $icoFile }
+        elseif (Test-Path $pyw)      { $sb.IconLocation = "$pyw,0" }
+        $sb.Save()
+        Write-Ok "Background shortcut created: 'DualLED Pro (Background)' (runs with no window)"
+
+        # Third shortcut: stop the silent background process cleanly (so it is
+        # never an unstoppable hidden process — addresses the no-off-switch risk).
+        $stopLnk = Join-Path $desktop "Stop DualLED Background.lnk"
+        $st = $shell.CreateShortcut($stopLnk)
+        $st.TargetPath       = $pyw
+        $st.Arguments        = '"' + $AppFile + '" --stop'
+        $st.WorkingDirectory = $InstallDir
+        $st.WindowStyle      = 7
+        $st.Description       = "DualLED Pro - stop the background process and turn the lightbar off"
+        if (Test-Path $icoFile)      { $st.IconLocation = $icoFile }
+        elseif (Test-Path $pyw)      { $st.IconLocation = "$pyw,0" }
+        $st.Save()
+        Write-Ok "Stop shortcut created: 'Stop DualLED Background'"
+    }
 } catch {
     Write-Warn "Could not create the Desktop shortcut ($($_.Exception.Message)). You can still run the app from PowerShell."
 }
@@ -118,5 +159,9 @@ try {
 Write-Step "Launching DualLED Pro ..."
 Write-Ok "Done! The app window should open now."
 Write-Host "`n    Next time, just double-click 'DualLED Pro' on your Desktop." -ForegroundColor DarkGray
-Write-Host "    Or paste:  & '$py' '$AppFile'`n" -ForegroundColor White
+Write-Host "    For SILENT background (no window): double-click 'DualLED Pro (Background)'." -ForegroundColor DarkGray
+$pywExe = Join-Path (Split-Path (Get-Command $py).Source -Parent) "pythonw.exe"
+if (Test-Path $pywExe) {
+    Write-Host "    Or paste (silent):  & '$pywExe' '$AppFile' --background`n" -ForegroundColor White
+}
 & $py $AppFile
