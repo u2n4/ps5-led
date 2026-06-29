@@ -1072,6 +1072,48 @@ class App(tk.Tk):
         style.configure("Danger.TButton", background="#e34d4d", foreground="#230b0b", padding=10, borderwidth=0)
         style.map("Danger.TButton", background=[("active","#ff6d6d")])
 
+        # ===== Modern dark theming for the remaining native-looking controls =====
+        # accent + neutral surfaces used by sliders / combos / checks / entries
+        ACCENT="#3b82f6"; ACCENT_HOVER="#60a5fa"; FIELD="#1b2330"; FIELD_BORDER="#2a3547"; TROUGH="#0e141d"
+        # Sliders — flat dark trough + round accent knob (no more grey 90s scale)
+        style.configure("DL.Horizontal.TScale", background=CARD, troughcolor=TROUGH,
+                        bordercolor=CARD, lightcolor=ACCENT, darkcolor=ACCENT, borderwidth=0)
+        style.map("DL.Horizontal.TScale",
+                  background=[("active",CARD)],
+                  troughcolor=[("active",TROUGH)],
+                  lightcolor=[("active",ACCENT_HOVER)], darkcolor=[("active",ACCENT_HOVER)])
+        # Comboboxes — dark field instead of the default white box
+        style.configure("DL.TCombobox", fieldbackground=FIELD, background=FIELD, foreground=TEXT,
+                        arrowcolor=SUB, bordercolor=FIELD_BORDER, lightcolor=FIELD_BORDER,
+                        darkcolor=FIELD_BORDER, borderwidth=1, padding=6, relief="flat")
+        style.map("DL.TCombobox",
+                  fieldbackground=[("readonly",FIELD),("focus",FIELD)],
+                  foreground=[("readonly",TEXT)],
+                  bordercolor=[("focus",ACCENT)], lightcolor=[("focus",ACCENT)], darkcolor=[("focus",ACCENT)],
+                  arrowcolor=[("active",TEXT)])
+        # the dropdown listbox is a classic Tk widget — color it via the option DB
+        self.option_add("*TCombobox*Listbox.background", FIELD)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#0b0f14")
+        self.option_add("*TCombobox*Listbox.borderWidth", 0)
+        # Check buttons — dark, accent indicator
+        style.configure("DL.TCheckbutton", background=CARD, foreground=TEXT, focuscolor=CARD,
+                        indicatorcolor=FIELD, indicatorbackground=FIELD, padding=(2,4))
+        style.map("DL.TCheckbutton",
+                  background=[("active",CARD)],
+                  foreground=[("active",TEXT)],
+                  indicatorcolor=[("selected",ACCENT),("active",FIELD_BORDER)])
+        # Entries — dark field
+        style.configure("DL.TEntry", fieldbackground=FIELD, foreground=TEXT, insertcolor=TEXT,
+                        bordercolor=FIELD_BORDER, lightcolor=FIELD_BORDER, darkcolor=FIELD_BORDER,
+                        borderwidth=1, padding=6, relief="flat")
+        style.map("DL.TEntry", bordercolor=[("focus",ACCENT)], lightcolor=[("focus",ACCENT)],
+                  darkcolor=[("focus",ACCENT)])
+        # value-readout label that rides next to each slider
+        style.configure("Val.Card.TLabel", background=CARD, foreground=ACCENT_HOVER,
+                        font=("Segoe UI Semibold", 11))
+
         # هيكل
         self.outer=ttk.Frame(self, style="Root.TFrame"); self.outer.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.9)
         header=ttk.Frame(self.outer, style="Root.TFrame"); header.pack(fill="x", pady=(8,6))
@@ -1118,27 +1160,32 @@ class App(tk.Tk):
 
         grid=ttk.Frame(self.card, style="Card.TFrame"); grid.pack(fill="x", padx=20, pady=6)
         ttk.Label(grid, text=self.s["mode"], style="Card.TLabel").grid(row=0,column=0,sticky="w",padx=(0,8))
-        self.mode_disp=ttk.Combobox(grid, values=MODE_DISPLAY[self.lang], state="readonly", width=18)
+        self.mode_disp=ttk.Combobox(grid, values=MODE_DISPLAY[self.lang], state="readonly", width=18, style="DL.TCombobox")
         self.mode_disp.set(code_to_display(self.lang, CFG.get("last_mode","Manual"))); self.mode_disp.grid(row=0,column=1,sticky="w")
 
-        ttk.Label(grid, text=self.s["interval"], style="Card.TLabel").grid(row=1,column=0,sticky="w",padx=(0,8),pady=(8,0))
-        self.sp=tk.Scale(grid, from_=0.1,to=5.0, resolution=0.1, orient="horizontal", bg=CARD, fg=TEXT, troughcolor=BG, highlightthickness=0, length=520)
-        self.sp.set(float(CFG.get("speed",1.0))); self.sp.grid(row=1,column=1, sticky="w")
-
-        ttk.Label(grid, text=self.s["rainbow_brightness"], style="Card.TLabel").grid(row=2,column=0,sticky="w",padx=(0,8),pady=(8,0))
-        self.rb=tk.Scale(grid, from_=0.2,to=1.0, resolution=0.05, orient="horizontal", bg=CARD, fg=TEXT, troughcolor=BG, highlightthickness=0, length=520)
-        self.rb.set(float(CFG.get("rainbow_brightness",0.9))); self.rb.grid(row=2,column=1, sticky="w")
-
-        ttk.Label(grid, text=self.s["flash_duty"], style="Card.TLabel").grid(row=3,column=0,sticky="w",padx=(0,8),pady=(8,0))
-        self.duty=tk.Scale(grid, from_=0.1,to=0.9, resolution=0.05, orient="horizontal", bg=CARD, fg=TEXT, troughcolor=BG, highlightthickness=0, length=520)
-        self.duty.set(float(CFG.get("flash_duty",0.5))); self.duty.grid(row=3,column=1, sticky="w")
+        # Modern ttk sliders: ttk.Scale has no resolution/value-display, so we snap
+        # to a step in the command and show the live value in an accent label.
+        def _mk_slider(row, label_key, lo, hi, step, init):
+            ttk.Label(grid, text=self.s[label_key], style="Card.TLabel").grid(
+                row=row, column=0, sticky="w", padx=(0,12), pady=(8,0))
+            val = ttk.Label(grid, text=f"{init:.2f}".rstrip("0").rstrip("."), style="Val.Card.TLabel")
+            val.grid(row=row, column=2, sticky="w", padx=(12,0), pady=(8,0))
+            sc = ttk.Scale(grid, from_=lo, to=hi, orient="horizontal",
+                           length=520, style="DL.Horizontal.TScale")
+            sc.set(init); sc.grid(row=row, column=1, sticky="w", pady=(8,0))
+            sc._step = step; sc._vlabel = val
+            return sc
+        self.sp   = _mk_slider(1, "interval",          0.1, 5.0, 0.1,  float(CFG.get("speed",1.0)))
+        self.rb   = _mk_slider(2, "rainbow_brightness",0.2, 1.0, 0.05, float(CFG.get("rainbow_brightness",0.9)))
+        self.duty = _mk_slider(3, "flash_duty",        0.1, 0.9, 0.05, float(CFG.get("flash_duty",0.5)))
 
         # ===== تبديل نموذج اليد =====
         ctrl_row = ttk.Frame(self.card, style="Card.TFrame"); ctrl_row.pack(fill="x", padx=20, pady=(4,4))
         ttk.Label(ctrl_row, text=self.s["ctrl_type"], style="Card.TLabel").pack(side="left", padx=(0,8))
         self.ctrl_type_var = tk.StringVar(value="PS5 DualSense")
         self.ctrl_type_cmb = ttk.Combobox(ctrl_row, values=["PS5 DualSense", "PS4 DualShock"],
-                                           state="readonly", width=18, textvariable=self.ctrl_type_var)
+                                           state="readonly", width=18, textvariable=self.ctrl_type_var,
+                                           style="DL.TCombobox")
         self.ctrl_type_cmb.pack(side="left")
         self.ctrl_type_cmb.bind("<<ComboboxSelected>>", self._on_ctrl_type_change)
 
@@ -1157,7 +1204,7 @@ class App(tk.Tk):
         prow=ttk.Frame(self.card, style="Card.TFrame"); prow.pack(fill="x", padx=20, pady=(6,8))
         ttk.Label(prow, text=self.s["profiles"], style="Card.TLabel").pack(side="left", padx=(0,8))
         self.prof_var=tk.StringVar(value="Default")
-        self.prof_cb=ttk.Combobox(prow, values=list(CFG.get("profiles",{}).keys()), state="readonly", width=18, textvariable=self.prof_var)
+        self.prof_cb=ttk.Combobox(prow, values=list(CFG.get("profiles",{}).keys()), state="readonly", width=18, textvariable=self.prof_var, style="DL.TCombobox")
         self.prof_cb.pack(side="left")
         ttk.Button(prow, text=self.s["save_profile"], style="Btn.TButton", command=self.save_profile).pack(side="left", padx=8)
         ttk.Button(prow, text=self.s["delete_profile"], style="Btn.TButton", command=self.delete_profile).pack(side="left", padx=8)
@@ -1166,11 +1213,11 @@ class App(tk.Tk):
         # خمول تلقائي
         opt=ttk.Frame(self.card, style="Card.TFrame"); opt.pack(fill="x", padx=20, pady=(6,10))
         self.as_var=tk.BooleanVar(value=bool(CFG.get("auto_sleep",{}).get("enabled", False)))
-        tk.Checkbutton(opt, text=self.s["auto_sleep"], variable=self.as_var, bg=CARD, fg=TEXT, activebackground=CARD, command=self.on_options).grid(row=0,column=0,sticky="w",padx=(0,8))
+        ttk.Checkbutton(opt, text=self.s["auto_sleep"], variable=self.as_var, command=self.on_options, style="DL.TCheckbutton").grid(row=0,column=0,sticky="w",padx=(0,8))
         ttk.Label(opt, text=self.s["as_minutes"], style="Card.TLabel").grid(row=0,column=1, sticky="e")
-        self.as_min=tk.Entry(opt, width=5); self.as_min.insert(0, CFG.get("auto_sleep",{}).get("minutes",30)); self.as_min.grid(row=0,column=2, padx=6)
+        self.as_min=ttk.Entry(opt, width=5, style="DL.TEntry"); self.as_min.insert(0, CFG.get("auto_sleep",{}).get("minutes",30)); self.as_min.grid(row=0,column=2, padx=6)
         ttk.Label(opt, text=self.s["as_action"], style="Card.TLabel").grid(row=0,column=3, sticky="e")
-        self.as_action=ttk.Combobox(opt, values=[self.s["as_off"], self.s["as_solid"]], state="readonly", width=8)
+        self.as_action=ttk.Combobox(opt, values=[self.s["as_off"], self.s["as_solid"]], state="readonly", width=8, style="DL.TCombobox")
         self.as_action.set(self.s["as_off"] if CFG.get("auto_sleep",{}).get("action","off")=="off" else self.s["as_solid"])
         self.as_action.grid(row=0,column=4, padx=6)
 
@@ -1189,9 +1236,18 @@ class App(tk.Tk):
 
         # Bind
         self.mode_disp.bind("<<ComboboxSelected>>", lambda e: self.on_mode_change())
-        self.sp.configure(command=lambda v: self.engine and self.engine.set_speed(float(v)))
-        self.rb.configure(command=lambda v: self.engine and self.engine.set_rb(float(v)))
-        self.duty.configure(command=lambda v: self.engine and self.engine.set_duty(float(v)))
+        # ttk.Scale is continuous — snap to each slider's step, update its value label,
+        # then feed the engine. Snapping keeps the persisted/displayed value clean.
+        def _snap(sc, v):
+            step = getattr(sc, "_step", 0.01)
+            sv = round(round(float(v)/step)*step, 4)
+            lbl = getattr(sc, "_vlabel", None)
+            if lbl is not None:
+                lbl.configure(text=f"{sv:.2f}".rstrip("0").rstrip("."))
+            return sv
+        self.sp.configure(command=lambda v: self.engine and self.engine.set_speed(_snap(self.sp, v)))
+        self.rb.configure(command=lambda v: self.engine and self.engine.set_rb(_snap(self.rb, v)))
+        self.duty.configure(command=lambda v: self.engine and self.engine.set_duty(_snap(self.duty, v)))
 
         # مفاتيح
         self.bind("<Escape>", lambda e: self.minimize_to_tray() if CFG.get("minimize_to_tray", True) else self.destroy())
@@ -1403,7 +1459,7 @@ class App(tk.Tk):
                         widget.configure(text=value)
                         break
                         
-            elif isinstance(widget, tk.Checkbutton):
+            elif isinstance(widget, (tk.Checkbutton, ttk.Checkbutton)):
                 text = widget.cget("text")
                 checkbutton_translations = {
                     ("خمول تلقائي", "Auto Sleep"): self.s["auto_sleep"]
