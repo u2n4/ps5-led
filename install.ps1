@@ -98,60 +98,60 @@ Write-Step "Installing dependencies (psutil, hidapi, pydualsense) ..."
 & $py -m pip install --user -r $ReqFile --quiet
 Write-Ok "Dependencies installed"
 
-# --- 4. Launch ---------------------------------------------------------------
-# --- 4. Create a Desktop shortcut -------------------------------------------
-Write-Step "Creating a Desktop shortcut ..."
+# --- 4. Create Desktop shortcuts ---------------------------------------------
+# WScript.Shell's COM .Save() corrupts Unicode (e.g. Arabic) destination paths —
+# common on OneDrive desktops like "...\OneDrive\سطح المكتب" — so we create each
+# .lnk in an ASCII temp folder and then Move-Item it to the real Desktop (the
+# .NET move is Unicode-safe and the .lnk is self-contained).
+function New-DLShortcut {
+    param([string]$Name, [string]$Target, [string]$Arguments, [int]$WindowStyle, [string]$Description, [string]$IconPath)
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    $tmpDir  = Join-Path $env:TEMP ("dlb_" + [guid]::NewGuid().ToString("N").Substring(0,8))
+    New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+    $tmpLnk  = Join-Path $tmpDir "s.lnk"
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $sc = $shell.CreateShortcut($tmpLnk)
+        $sc.TargetPath       = $Target
+        $sc.Arguments        = $Arguments
+        $sc.WorkingDirectory = $InstallDir
+        $sc.WindowStyle      = $WindowStyle
+        $sc.Description       = $Description
+        if ($IconPath -and (Test-Path $IconPath)) { $sc.IconLocation = $IconPath }
+        $sc.Save()
+        $final = Join-Path $desktop ($Name + ".lnk")
+        Move-Item -LiteralPath $tmpLnk -Destination $final -Force
+        return $true
+    } finally {
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Write-Step "Creating Desktop shortcuts ..."
 try {
     # Prefer pythonw.exe (runs with no black console window)
     $pyExe = (Get-Command $py -ErrorAction Stop).Source
     $pyDir = Split-Path $pyExe -Parent
     $pyw   = Join-Path $pyDir "pythonw.exe"
     $launcher = if (Test-Path $pyw) { $pyw } else { $pyExe }
+    $iconArg  = if (Test-Path $IcoFile) { $IcoFile } else { "$launcher,0" }
 
-    $desktop  = [Environment]::GetFolderPath("Desktop")
-    $lnkPath  = Join-Path $desktop "DualLED Pro.lnk"
-
-    $shell = New-Object -ComObject WScript.Shell
-    $sc = $shell.CreateShortcut($lnkPath)
-    $sc.TargetPath       = $launcher
-    $sc.Arguments        = '"' + $AppFile + '"'
-    $sc.WorkingDirectory = $InstallDir
-    $sc.WindowStyle      = 1
-    $sc.Description       = "DualLED Pro - PS5/PS4 RGB lightbar control"
-    # Use the app icon if present, else fall back to python's icon
-    $icoFile = Join-Path $InstallDir "app.ico"
-    if (Test-Path $icoFile)      { $sc.IconLocation = $icoFile }
-    elseif (Test-Path $launcher) { $sc.IconLocation = "$launcher,0" }
-    $sc.Save()
+    New-DLShortcut -Name "DualLED Pro" -Target $launcher `
+        -Arguments ('"' + $AppFile + '"') -WindowStyle 1 `
+        -Description "DualLED Pro - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
     Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
 
-    # Second shortcut: silent background mode (no window at all — just drives the lightbar).
-    # Uses pythonw.exe (never a console) + --background (no Tk UI). Lightweight.
     if (Test-Path $pyw) {
-        $bgLnk = Join-Path $desktop "DualLED Pro (Background).lnk"
-        $sb = $shell.CreateShortcut($bgLnk)
-        $sb.TargetPath       = $pyw
-        $sb.Arguments        = '"' + $AppFile + '" --background'
-        $sb.WorkingDirectory = $InstallDir
-        $sb.WindowStyle      = 7          # minimized; pythonw shows nothing anyway
-        $sb.Description       = "DualLED Pro - run silently in the background (no window)"
-        if (Test-Path $icoFile)      { $sb.IconLocation = $icoFile }
-        elseif (Test-Path $pyw)      { $sb.IconLocation = "$pyw,0" }
-        $sb.Save()
+        # Silent background mode (no window at all — just drives the lightbar).
+        New-DLShortcut -Name "DualLED Pro (Background)" -Target $pyw `
+            -Arguments ('"' + $AppFile + '" --background') -WindowStyle 7 `
+            -Description "DualLED Pro - run silently in the background (no window)" -IconPath $iconArg | Out-Null
         Write-Ok "Background shortcut created: 'DualLED Pro (Background)' (runs with no window)"
 
-        # Third shortcut: stop the silent background process cleanly (so it is
-        # never an unstoppable hidden process — addresses the no-off-switch risk).
-        $stopLnk = Join-Path $desktop "Stop DualLED Background.lnk"
-        $st = $shell.CreateShortcut($stopLnk)
-        $st.TargetPath       = $pyw
-        $st.Arguments        = '"' + $AppFile + '" --stop'
-        $st.WorkingDirectory = $InstallDir
-        $st.WindowStyle      = 7
-        $st.Description       = "DualLED Pro - stop the background process and turn the lightbar off"
-        if (Test-Path $icoFile)      { $st.IconLocation = $icoFile }
-        elseif (Test-Path $pyw)      { $st.IconLocation = "$pyw,0" }
-        $st.Save()
+        # Stop the silent background process cleanly (never an unstoppable hidden process).
+        New-DLShortcut -Name "Stop DualLED Background" -Target $pyw `
+            -Arguments ('"' + $AppFile + '" --stop') -WindowStyle 7 `
+            -Description "DualLED Pro - stop the background process and turn the lightbar off" -IconPath $iconArg | Out-Null
         Write-Ok "Stop shortcut created: 'Stop DualLED Background'"
     }
 } catch {
