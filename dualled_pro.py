@@ -976,7 +976,7 @@ STR = {
    "battery":"البطارية",
    "mode":"الوضع","interval":"السرعة/الفاصل","rainbow_brightness":"سطوع قوس قزح","flash_duty":"نسبة الوميض",
    "pick_color":"اختيار لون","stop":"إيقاف","quick":"ألوان سريعة",
-   "background":"تشغيل في الخلفية",
+   "background":"تشغيل في الخلفية","close":"إغلاق",
    "rgb_fix":"تصحيح RGB/BGR",
    "profiles":"ملفات التعريف","save_profile":"حفظ","delete_profile":"حذف",
    "auto_sleep":"خمول تلقائي","as_minutes":"دقائق","as_action":"الإجراء","as_off":"إطفاء","as_solid":"تثبيت",
@@ -994,7 +994,7 @@ STR = {
    "battery":"Battery",
    "mode":"Mode","interval":"Speed / Interval","rainbow_brightness":"Rainbow Brightness","flash_duty":"Flash Duty",
    "pick_color":"Pick Color","stop":"Stop","quick":"Quick Colors",
-   "background":"Run in background",
+   "background":"Run in background","close":"Close",
    "rgb_fix":"RGB/BGR mapping fix",
    "profiles":"Profiles","save_profile":"Save","delete_profile":"Delete",
    "auto_sleep":"Auto Sleep","as_minutes":"Minutes","as_action":"Action","as_off":"Off","as_solid":"Solid",
@@ -1073,6 +1073,9 @@ class App(tk.Tk):
         style.map("Btn.TButton", background=[("active","#273245")])
         style.configure("Danger.TButton", background="#e34d4d", foreground="#230b0b", padding=10, borderwidth=0)
         style.map("Danger.TButton", background=[("active","#ff6d6d")])
+        # Close/quit — neutral dark, distinct from the red Stop.
+        style.configure("Close.TButton", background="#2a3340", foreground=TEXT, padding=10, borderwidth=0)
+        style.map("Close.TButton", background=[("active","#3a4658")])
 
         # ===== Modern dark theming for the remaining native-looking controls =====
         # accent + neutral surfaces used by sliders / combos / checks / entries
@@ -1231,6 +1234,8 @@ class App(tk.Tk):
         # One app, one shortcut: hide the window to the tray but keep the engine
         # driving the lightbar — same effect as the old separate "Background" icon.
         ttk.Button(btns, text=self.s["background"], style="Btn.TButton", command=self.go_background).pack(side="left", padx=6)
+        # Real quit (engine off, backend closed) — distinct from Stop/Background.
+        ttk.Button(btns, text=self.s["close"], style="Close.TButton", command=self.quit_app).pack(side="right", padx=6)
 
         # حالة
         self.status_var=tk.StringVar(value=self.s["status_manual"])
@@ -1457,7 +1462,8 @@ class App(tk.Tk):
                     ("حذف", "Delete"): self.s["delete_profile"],
                     ("إيقاف", "Stop"): self.s["stop"],
                     ("اختيار لون", "Pick Color"): self.s["pick_color"],
-                    ("تشغيل في الخلفية", "Run in background"): self.s["background"]
+                    ("تشغيل في الخلفية", "Run in background"): self.s["background"],
+                    ("إغلاق", "Close"): self.s["close"]
                 }
                 
                 for keys, value in button_translations.items():
@@ -1562,6 +1568,27 @@ class App(tk.Tk):
         except Exception:
             pass
         self.minimize_to_tray()
+
+    def quit_app(self):
+        """إغلاق فعلي: إيقاف المحرك وإغلاق الاتصال ثم الخروج (يتجاوز التصغير للـtray)."""
+        # Stop the engine thread, then close the HID backend, then destroy the
+        # window. Each step is best-effort so a failing one can't trap the app.
+        try:
+            if self.engine is not None:
+                self.engine.stop_evt.set()
+        except Exception as e:
+            log("quit: engine stop err:", e)
+        try:
+            if self.backend is not None:
+                self.backend.close()
+        except Exception as e:
+            log("quit: backend close err:", e)
+        try:
+            release_slot_lock()
+        except Exception:
+            pass
+        log("App quit by user")
+        self.destroy()
 
     def minimize_to_tray(self):
         """تصغير النافذة للشريط السفلي (مخفية)"""
