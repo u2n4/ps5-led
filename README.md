@@ -194,6 +194,21 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 - 🪟 **ملء الشاشة + تصغير للشريط** بدلاً من الإغلاق.
 - 🌌 **خلفية نجوم متحركة** (قابلة للإيقاف).
 - 🎛️ **وضع خلفي بدون واجهة** عبر سطر الأوامر.
+- 🧩 **ملف واحد، بدون أي بناء** — `dualled_pro.py` فقط، بايثون + Tkinter.
+
+> **بصراحة، نطاق البرنامج:** DualLED Pro مركّز على **الإضاءة، البطارية، والإعدادات المحفوظة**. مو برنامج تفاعل مع الموسيقى ولا ماكروهات ولا جدولة — يسوّي شي واحد ويسوّيه نظيف.
+
+---
+
+### 📸 لقطات الشاشة
+
+| عرض ثلاثي الأبعاد متزامن | التأثيرات والإعدادات |
+|---|---|
+| ![3D view](assets/screenshot-3d.png) | ![Effects](assets/screenshot-effects.png) |
+
+<!-- ضِف صور PNG حقيقية في مجلد assets. -->
+
+---
 
 ### ⚡ التثبيت السهل (بدون بايثون ولا أي شي)
 
@@ -213,15 +228,93 @@ irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
 
 لتشغيله مرة ثانية بعدين: الصق نفس السطر، أو استخدم الاختصار اللي يطلع لك بنهاية التثبيت.
 
-### 🚀 التشغيل اليدوي (للمطورين)
+### 🚀 التثبيت اليدوي (للمطورين)
+
+> يحتاج **بايثون 3.8+** ويد موصولة عبر **USB** (البلوتوث يشتغل بعد على أغلب الأجهزة).
+
+```bash
+# 1. انسخ المستودع
+git clone https://github.com/u2n4/dualled-pro.git
+cd dualled-pro
+
+# 2. (يُفضّل) بيئة افتراضية
+python -m venv .venv
+.venv\Scripts\activate
+
+# 3. ركّب المتطلبات
+pip install -r requirements.txt
+
+# 4. شغّل
+python dualled_pro.py
+```
+
+**تثبيت سريع** (أقل شي يكفي للتشغيل):
 
 ```bash
 pip install -U pydualsense hidapi psutil
 python dualled_pro.py
 ```
 
-> ملاحظة ويندوز: لتشغيل DualSense لازم تثبّت درايفر **WinUSB** على اليد عبر [Zadig](https://zadig.akeo.ie/). يد PS4 غالباً تشتغل بدون هذا.
+> **ملاحظة درايفر ويندوز (يد PS5 DualSense):** عشان مكتبة `pydualsense` تكلّم اليد، ويندوز يحتاج درايفر **WinUSB/libusb** مربوط باليد. أسهل طريقة عبر [Zadig](https://zadig.akeo.ie/): اختر جهاز DualSense ← ثبّت **WinUSB**. (يد PS4 / الأجهزة العامة غالباً تشتغل بدون هذا.)
 
-الترخيص: [MIT](LICENSE). غير تابع لشركة Sony.
+---
+
+### 🎛️ الاستخدام
+
+شغّل الواجهة:
+
+```bash
+python dualled_pro.py
+```
+
+شغّله **بدون واجهة** (يستخدم آخر إعدادات حفظتها):
+
+```bash
+# تشغيل الإضاءة بالخلفية
+python dualled_pro.py --background
+
+# يوقف تلقائياً بعد 30 دقيقة، ويطفّي الإضاءة
+python dualled_pro.py --background --stop-after 30 --off-on-exit
+```
+
+| الأمر | الوظيفة |
+|---|---|
+| `--background` | يشتغل بدون واجهة، باستخدام آخر لون/وضع محفوظ. |
+| `--stop-after N` | يوقف تلقائياً بعد `N` دقيقة (وضع الخلفية). |
+| `--off-on-exit` | يطفّي الإضاءة عند الخروج. |
+
+الإعدادات والسجلات تنحفظ في مجلد بيانات النظام (`%APPDATA%\DualLED_Pro` على ويندوز).
+
+---
+
+### 🧩 كيف يشتغل البرنامج
+
+```
+┌─────────────┐   HID    ┌───────────────┐   لون/تأثير      ┌──────────────┐
+│   اليد       │ ───────► │  DualLED Pro  │ ───────────────► │  الإضاءة      │
+│  PS5 / PS4  │ ◄─────── │  محرّك + واجهة  │                  │  (RGB فعلي)  │
+└─────────────┘  بطارية   └───────┬───────┘                  └──────────────┘
+                                 │ انعكاس
+                                 ▼
+                        ┌──────────────────┐
+                        │  نموذج 3D حي      │  نفس اللون، متزامن
+                        └──────────────────┘
+```
+
+خيط (thread) بالخلفية يحسب اللون الحالي (ثابت أو تأثير متحرّك) ويرسله للإضاءة الفعلية عبر HID، وبنفس الوقت واجهة Tkinter ترسم يد ثلاثية الأبعاد إضاءتها بنفس اللون بالضبط.
+
+---
+
+### 🤝 المساهمة
+
+الـ PRs والـ issues مرحّب فيها — شوف [CONTRIBUTING.md](CONTRIBUTING.md). أفكار للمبتدئين: نماذج يد إضافية في العرض 3D، تأثيرات جديدة، وصفات تغليف (PyInstaller / `.app` / AppImage)، وترجمات.
+
+### 📜 الترخيص
+
+[MIT](LICENSE) © u2n4
+
+### 🙏 شكر
+
+مبني على [`pydualsense`](https://github.com/flok/pydualsense) و [`hidapi`](https://github.com/trezor/cython-hidapi) و [`psutil`](https://github.com/giampaolo/psutil). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
 
 </div>
