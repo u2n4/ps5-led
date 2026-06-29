@@ -1040,6 +1040,15 @@ class App(tk.Tk):
         self.s = STR[self.lang]
         self.configure(bg=BG); self.title(self.s["title"])
         self.geometry("1200x900");
+        # Window/taskbar icon — app.ico ships next to the script (installed) or under assets/ (dev).
+        try:
+            _here = Path(__file__).resolve().parent
+            for _ico in (_here / "app.ico", _here / "assets" / "app.ico"):
+                if _ico.exists():
+                    self.iconbitmap(default=str(_ico))
+                    break
+        except Exception:
+            pass
         if CFG.get("fullscreen_on_start", True): self.attributes("-fullscreen", True)
 
         # خلفية النجوم
