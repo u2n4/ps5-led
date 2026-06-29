@@ -85,8 +85,38 @@ Write-Step "Installing dependencies (psutil, hidapi, pydualsense) ..."
 Write-Ok "Dependencies installed"
 
 # --- 4. Launch ---------------------------------------------------------------
+# --- 4. Create a Desktop shortcut -------------------------------------------
+Write-Step "Creating a Desktop shortcut ..."
+try {
+    # Prefer pythonw.exe (runs with no black console window)
+    $pyExe = (Get-Command $py -ErrorAction Stop).Source
+    $pyDir = Split-Path $pyExe -Parent
+    $pyw   = Join-Path $pyDir "pythonw.exe"
+    $launcher = if (Test-Path $pyw) { $pyw } else { $pyExe }
+
+    $desktop  = [Environment]::GetFolderPath("Desktop")
+    $lnkPath  = Join-Path $desktop "DualLED Pro.lnk"
+
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($lnkPath)
+    $sc.TargetPath       = $launcher
+    $sc.Arguments        = '"' + $AppFile + '"'
+    $sc.WorkingDirectory = $InstallDir
+    $sc.WindowStyle      = 1
+    $sc.Description       = "DualLED Pro - PS5/PS4 RGB lightbar control"
+    # Use the app icon if present, else fall back to python's icon
+    $icoFile = Join-Path $InstallDir "app.ico"
+    if (Test-Path $icoFile)      { $sc.IconLocation = $icoFile }
+    elseif (Test-Path $launcher) { $sc.IconLocation = "$launcher,0" }
+    $sc.Save()
+    Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
+} catch {
+    Write-Warn "Could not create the Desktop shortcut ($($_.Exception.Message)). You can still run the app from PowerShell."
+}
+
+# --- 5. Launch ---------------------------------------------------------------
 Write-Step "Launching DualLED Pro ..."
 Write-Ok "Done! The app window should open now."
-Write-Host "`n    To run it again later, paste:" -ForegroundColor DarkGray
-Write-Host "    & '$py' '$AppFile'`n" -ForegroundColor White
+Write-Host "`n    Next time, just double-click 'DualLED Pro' on your Desktop." -ForegroundColor DarkGray
+Write-Host "    Or paste:  & '$py' '$AppFile'`n" -ForegroundColor White
 & $py $AppFile
