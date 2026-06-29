@@ -16,7 +16,7 @@
 
 🇬🇧 English · 🇸🇦 [بالعربي](#-بالعربي)
 
-![DualLED Pro — live controller view with an animated RGB lightbar](assets/hero.png)
+![DualLED Pro — PS5 DualSense with an animated RGB lightbar](assets/hero.png)
 
 </div>
 
