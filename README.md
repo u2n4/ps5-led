@@ -24,6 +24,32 @@
 
 ---
 
+## ⚡ Easy install (no Python needed)
+
+**Don't have Python? No problem.** Open **PowerShell** and paste this **one line** — it installs Python (if you don't have it), downloads the app, installs everything, and opens it automatically:
+
+```powershell
+irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
+```
+
+<details>
+<summary>👉 How do I open PowerShell?</summary>
+
+1. Press the **Windows key**.
+2. Type **`powershell`**.
+3. Click **Windows PowerShell**, paste the line above, press **Enter**.
+4. Wait. The app opens by itself when it's done. ✅
+
+> If you see a message asking you to open a **new** PowerShell window, just close it, open PowerShell again, and paste the same line once more.
+
+</details>
+
+To run it again later, just paste the same line — or use the shortcut printed at the end of the install.
+
+> 🛠 Manual install (for developers) is in [Installation](#-installation) below.
+
+---
+
 ## ✨ Features
 
 - 🎨 **10 lighting modes** — Manual, Rainbow, Pulse, Flash, Breathing, Heartbeat, Wave, Gradient, Sequence, Random.
@@ -169,7 +195,25 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 - 🌌 **خلفية نجوم متحركة** (قابلة للإيقاف).
 - 🎛️ **وضع خلفي بدون واجهة** عبر سطر الأوامر.
 
-### 🚀 التشغيل (ويندوز)
+### ⚡ التثبيت السهل (بدون بايثون ولا أي شي)
+
+**ما عندك بايثون؟ عادي.** افتح **PowerShell** والصق هذا **السطر الواحد** — يثبّت بايثون لو ما هو موجود، يحمّل البرنامج، يركّب كل شي، ويفتح البرنامج تلقائياً:
+
+```powershell
+irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
+```
+
+**كيف تفتح PowerShell؟**
+1. اضغط زر **Windows**.
+2. اكتب **`powershell`**.
+3. افتح **Windows PowerShell**، الصق السطر فوق، اضغط **Enter**.
+4. استنى. البرنامج يفتح بنفسه لما يخلّص. ✅
+
+> لو طلعت لك رسالة تقول افتح نافذة PowerShell **جديدة** — سكّر النافذة، افتح PowerShell مرة ثانية، والصق نفس السطر.
+
+لتشغيله مرة ثانية بعدين: الصق نفس السطر، أو استخدم الاختصار اللي يطلع لك بنهاية التثبيت.
+
+### 🚀 التشغيل اليدوي (للمطورين)
 
 ```bash
 pip install -U pydualsense hidapi psutil
