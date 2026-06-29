@@ -1,0 +1,39 @@
+name: 🐛 Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: controller
+    attributes:
+      label: Controller
+      placeholder: "PS5 DualSense / PS4 DualShock 4, USB or Bluetooth"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS & Python version
+      placeholder: "Windows 11, Python 3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: "Paste relevant lines from %APPDATA%\\DualLED_Pro\\app.log"
+      render: shell
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch app
+        2. Select mode ...
+        3. ...
