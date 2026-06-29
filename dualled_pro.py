@@ -160,9 +160,14 @@ def _wait_event_loop(cb_restore):
         time.sleep(0.05)
 
 def _secondary_instance_restore_and_exit():
+    # Belt-and-suspenders: ping the kernel restore event AND drop the restore.signal
+    # file. The running instance restores on either path, so if its event-wait
+    # thread is wedged the 1s file poll still brings the window back — this is what
+    # fixes "I had to double-click the shortcut several times before it appeared".
     h = _open_event_for_set()
     if h:
         _set_event(h)
+    _signal_restore_request()
 
 def _acquire_global_mutex():
     import ctypes
@@ -1260,7 +1265,9 @@ class App(tk.Tk):
         self.duty.configure(command=lambda v: self.engine and self.engine.set_duty(_snap(self.duty, v)))
 
         # مفاتيح
-        self.bind("<Escape>", lambda e: self.minimize_to_tray() if CFG.get("minimize_to_tray", True) else self.destroy())
+        # Escape hides to background (recoverable by relaunching the shortcut),
+        # not a silent quit — X is the real-quit affordance now.
+        self.bind("<Escape>", lambda e: self.go_background())
         self.bind("<F11>", lambda e: self.toggle_view())
         
         # تعامل مع إغلاق النافذة
@@ -1554,11 +1561,11 @@ class App(tk.Tk):
     
     # ---- Minimize to Tray ----
     def on_closing(self):
-        """التعامل مع إغلاق النافذة - تصغير للشريط السفلي أو إغلاق فعلي"""
-        if CFG.get("minimize_to_tray", True):
-            self.minimize_to_tray()
-        else:
-            self.destroy()
+        """زر X يغلق البرنامج نهائيًا. للخلفية، استخدم زر 'تشغيل في الخلفية'."""
+        # The window X is a real quit now — no hidden ghost process. Hiding to the
+        # background is an explicit, opt-in action via the dedicated button. This
+        # removes the invisible-tray zombie that forced re-launching the shortcut.
+        self.quit_app()
     
     def go_background(self):
         """إخفاء النافذة مع إبقاء المحرك يقود الإضاءة — بديل اختصار الخلفية المنفصل."""
