@@ -136,23 +136,19 @@ try {
     $launcher = if (Test-Path $pyw) { $pyw } else { $pyExe }
     $iconArg  = if (Test-Path $IcoFile) { $IcoFile } else { "$launcher,0" }
 
+    # ONE shortcut. Background + stop live INSIDE the app now (the "Run in
+    # background" button hides the window to the tray while the lightbar keeps
+    # running; closing/Stop turns it off) — no extra Desktop icons.
     New-DLShortcut -Name "DualLED Pro" -Target $launcher `
         -Arguments ('"' + $AppFile + '"') -WindowStyle 1 `
         -Description "DualLED Pro - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
     Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
 
-    if (Test-Path $pyw) {
-        # Silent background mode (no window at all — just drives the lightbar).
-        New-DLShortcut -Name "DualLED Pro (Background)" -Target $pyw `
-            -Arguments ('"' + $AppFile + '" --background') -WindowStyle 7 `
-            -Description "DualLED Pro - run silently in the background (no window)" -IconPath $iconArg | Out-Null
-        Write-Ok "Background shortcut created: 'DualLED Pro (Background)' (runs with no window)"
-
-        # Stop the silent background process cleanly (never an unstoppable hidden process).
-        New-DLShortcut -Name "Stop DualLED Background" -Target $pyw `
-            -Arguments ('"' + $AppFile + '" --stop') -WindowStyle 7 `
-            -Description "DualLED Pro - stop the background process and turn the lightbar off" -IconPath $iconArg | Out-Null
-        Write-Ok "Stop shortcut created: 'Stop DualLED Background'"
+    # Clean up the old multi-shortcut layout from previous installs, if present.
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    foreach ($old in @("DualLED Pro (Background).lnk", "Stop DualLED Background.lnk")) {
+        $p = Join-Path $desktop $old
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
     }
 } catch {
     Write-Warn "Could not create the Desktop shortcut ($($_.Exception.Message)). You can still run the app from PowerShell."
@@ -162,9 +158,5 @@ try {
 Write-Step "Launching DualLED Pro ..."
 Write-Ok "Done! The app window should open now."
 Write-Host "`n    Next time, just double-click 'DualLED Pro' on your Desktop." -ForegroundColor DarkGray
-Write-Host "    For SILENT background (no window): double-click 'DualLED Pro (Background)'." -ForegroundColor DarkGray
-$pywExe = Join-Path (Split-Path (Get-Command $py).Source -Parent) "pythonw.exe"
-if (Test-Path $pywExe) {
-    Write-Host "    Or paste (silent):  & '$pywExe' '$AppFile' --background`n" -ForegroundColor White
-}
+Write-Host "    To run it in the background, use the 'Run in background' button inside the app." -ForegroundColor DarkGray
 & $py $AppFile
