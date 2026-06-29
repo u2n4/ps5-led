@@ -23,6 +23,7 @@ Write-Host @"
 $InstallDir = Join-Path $env:LOCALAPPDATA "DualLED-Pro"
 $AppFile    = Join-Path $InstallDir "dualled_pro.py"
 $ReqFile    = Join-Path $InstallDir "requirements.txt"
+$IcoFile    = Join-Path $InstallDir "app.ico"
 $RawBase    = "https://raw.githubusercontent.com/u2n4/dualled-pro/main"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -87,6 +88,8 @@ Write-Ok ("Using " + (& $py --version 2>&1))
 Write-Step "Downloading DualLED Pro ..."
 Invoke-WebRequest -Uri "$RawBase/dualled_pro.py"   -OutFile $AppFile
 Invoke-WebRequest -Uri "$RawBase/requirements.txt" -OutFile $ReqFile
+# App icon for the Desktop shortcuts + window (best-effort; shortcuts fall back to python's icon).
+try { Invoke-WebRequest -Uri "$RawBase/assets/app.ico" -OutFile $IcoFile } catch { Write-Warn "Icon download skipped." }
 Write-Ok "Downloaded to $InstallDir"
 
 # --- 3. Install dependencies -------------------------------------------------
