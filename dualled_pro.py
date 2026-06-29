@@ -1746,7 +1746,6 @@ def main():
     # طبقة إضافية بالقفل على الملفات
     if _instance_already_running():
         _signal_restore_request()
-        try_restore_existing_instance()
         return False
     max_instances = int(CFG.get("max_instances", 1))
     if not acquire_slot_lock(max_instances):
