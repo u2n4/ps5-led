@@ -10,15 +10,13 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](CONTRIBUTING.md)
 [![Made with Tkinter](https://img.shields.io/badge/UI-Tkinter-FFD43B?logo=python&logoColor=333)](https://docs.python.org/3/library/tkinter.html)
 
-<!-- Once you push: replace USER/REPO and add a real GIF to assets/demo.gif -->
 [![GitHub stars](https://img.shields.io/github/stars/u2n4/dualled-pro?style=social)](https://github.com/u2n4/dualled-pro/stargazers)
 
 **Pick any color, run a lighting effect, watch your battery — and see it mirrored on a 3D model of your actual controller, in real time.**
 
 🇬🇧 English · 🇸🇦 [بالعربي](#-بالعربي)
 
-<!-- Drop a real screen recording here. ~10s, shows color change + 3D sync + an effect. -->
-![DualLED Pro demo](assets/demo.gif)
+![DualLED Pro — PS5 DualSense with RGB lightbar](assets/hero.png)
 
 </div>
 
