@@ -1,0 +1,12 @@
+# Normalize line endings: store text as LF in the repo
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.txt text eol=lf
+
+# Treat as binary (no eol conversion)
+*.png binary
+*.gif binary
+*.jpg binary
+*.exe binary

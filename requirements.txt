@@ -1,0 +1,15 @@
+# DualLED Pro — runtime dependencies
+# Python 3.8+. The UI uses Tkinter, which ships with most Python installs
+# (on Debian/Ubuntu: `sudo apt install python3-tk`).
+
+# Battery & process info
+psutil>=5.7.0
+
+# PS4 / generic HID controller access (DualShock 4)
+hidapi>=0.12.0
+
+# PS5 DualSense access (primary)
+pydualsense>=0.6.0
+
+# PS5 DualSense access (alternative backend, optional — auto-detected if present)
+# dualsense-controller>=1.0.0
