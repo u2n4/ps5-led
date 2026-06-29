@@ -630,19 +630,21 @@ class Starfield(tk.Canvas):
 # --------------------------- 3D Controller Widget ---------------------------
 class Controller3D(tk.Canvas):
     """
-    رسم يد تحكم ثلاثية الأبعاد احترافية — PS5 DualSense أو PS4 DualShock 4
-    يتزامن لون الـ lightbar مع اللون الفعلي على اليد بنسبة 100%
+    رسم يد تحكم احترافية عامة (generic gamepad) مع شريط LED يتغيّر شكل توهّجه حسب الوضع.
+    لون الشريط يتزامن مع اللون الفعلي على اليد بنسبة 100%، وكل وضع له توقيع توهّج مختلف.
     """
     def __init__(self, master, controller_type="ps5", width=680, height=260, **kw):
         bg = kw.pop("bg", "#0b0f14")
         super().__init__(master, width=width, height=height, bg=bg, highlightthickness=0, bd=0, **kw)
-        self.ctrl_type = controller_type  # "ps5" or "ps4"
-        self._led_color = (0, 170, 255)   # RGB tuple — synced with engine
+        self.ctrl_type = controller_type  # "ps5" or "ps4" — cosmetic roundness only
+        self._led_color = (0, 170, 255)   # RGB tuple — synced with engine output
         self._glow_layers = 8             # عدد طبقات التوهج
         self._width = width
         self._height = height
         self._bg = bg
         self._draw_id = None
+        self._mode = "Manual"             # active lighting mode (drives glow signature)
+        self._anim = 0                    # free-running phase, advanced once per redraw
         self.bind("<Configure>", self._on_resize)
 
     def _on_resize(self, event=None):
@@ -651,15 +653,20 @@ class Controller3D(tk.Canvas):
         self.redraw()
 
     def set_led_color(self, r, g, b):
-        """تحديث لون LED — يُستدعى من sync loop"""
+        """تحديث لون LED — يُستدعى كل 33ms من sync loop. يعيد الرسم دائمًا."""
         self._led_color = (int(r), int(g), int(b))
         self.redraw()
 
     def set_controller_type(self, ctype):
-        """تبديل بين ps5 و ps4"""
+        """تبديل ps5/ps4 — يؤثر فقط على استدارة الجسم (تجميلي، بدون أي شكل سوني)"""
         if ctype != self.ctrl_type:
             self.ctrl_type = ctype
             self.redraw()
+
+    def set_mode(self, code):
+        """تحديث وضع الإضاءة — يغيّر شكل/توقيع توهّج الشريط حسب الوضع المختار"""
+        self._mode = code or "Manual"
+        self.redraw()
 
     def _blend(self, c1, c2, t):
         """خلط لونين بنسبة t (0=c1, 1=c2)"""
@@ -678,458 +685,216 @@ class Controller3D(tk.Canvas):
         return (11, 15, 20)
 
     def redraw(self):
+        """يمسح ويعيد رسم: الجسم + عناصر التحكم + شريط LED حسب الوضع."""
+        self._anim = (self._anim + 1) % 360   # phase advances once per frame
         self.delete("all")
-        if self.ctrl_type == "ps5":
-            self._draw_ps5()
-        else:
-            self._draw_ps4()
+        bg = self._parse_bg()
+        self._draw_body(bg)
+        self._draw_controls(bg)
+        self._draw_led_strip(self._led_color, bg)
 
-    # ==================== PS5 DualSense ====================
-    def _draw_ps5(self):
-        W, H = self._width, self._height
-        cx, cy = W // 2, H // 2 + 10
-        bg_rgb = self._parse_bg()
-        led = self._led_color
+    # ==================== Generic body ====================
+    def _body_metrics(self):
+        W, H = max(1, self._width), max(1, self._height)
+        return W, H, W // 2, H // 2 + 8, int(W * 0.56), int(H * 0.60)
 
-        # --- المقاسات النسبية ---
-        bw = int(W * 0.52)   # عرض الجسم
-        bh = int(H * 0.55)   # ارتفاع الجسم
-        grip_w = int(bw * 0.22)
-        grip_h = int(bh * 0.72)
-
-        # ===== ظل خلفي (drop shadow) =====
-        shadow_off = 6
-        shadow_col = self._hex(self._blend(bg_rgb, (0,0,0), 0.5))
-        self._draw_ps5_body(cx + shadow_off, cy + shadow_off, bw, bh, grip_w, grip_h, shadow_col, shadow_col)
-
-        # ===== الجسم الرئيسي - الجزء الأسود السفلي =====
-        dark_body = (30, 30, 35)
-        self._draw_ps5_body(cx, cy, bw, bh, grip_w, grip_h,
-                           self._hex(dark_body), self._hex((20, 20, 25)))
-
-        # ===== الجزء الأبيض العلوي (الغطاء) =====
-        white_body = (225, 228, 232)
-        white_hi = (245, 248, 252)
-        top_h = int(bh * 0.52)
-        self._draw_ps5_top_shell(cx, cy, bw, top_h, self._hex(white_body), self._hex(white_hi))
-
-        # ===== Touchpad =====
-        tp_w = int(bw * 0.38)
-        tp_h = int(bh * 0.28)
-        tp_x = cx
-        tp_y = cy - int(bh * 0.12)
-        # Touchpad base
-        self.create_rectangle(tp_x - tp_w//2, tp_y - tp_h//2,
-                              tp_x + tp_w//2, tp_y + tp_h//2,
-                              fill="#1a1d22", outline="#2a2d32", width=2)
-        # Touchpad highlight
-        self.create_rectangle(tp_x - tp_w//2 + 2, tp_y - tp_h//2 + 2,
-                              tp_x + tp_w//2 - 2, tp_y - tp_h//2 + 6,
-                              fill="#2a2d35", outline="")
-
-        # ===== LIGHTBAR (شريط حول التاتش باد) — متزامن 100% =====
-        self._draw_ps5_lightbar(tp_x, tp_y, tp_w, tp_h, led, bg_rgb)
-
-        # ===== Player LEDs تحت التاتش باد =====
-        led_y = tp_y + tp_h//2 + 10
-        for i in range(5):
-            lx = cx - 16 + i * 8
-            self.create_oval(lx-2, led_y-2, lx+2, led_y+2,
-                           fill="#ffffff" if i == 0 else "#3a3d42", outline="")
-
-        # ===== الأزرار — أناظر (Joysticks) =====
-        stick_r = int(bw * 0.065)
-        # يسار
-        ls_x = cx - int(bw * 0.24)
-        ls_y = cy + int(bh * 0.14)
-        self._draw_joystick(ls_x, ls_y, stick_r, dark_body)
-        # يمين
-        rs_x = cx + int(bw * 0.24)
-        rs_y = cy + int(bh * 0.14)
-        self._draw_joystick(rs_x, rs_y, stick_r, dark_body)
-
-        # ===== D-Pad =====
-        dp_x = cx - int(bw * 0.24)
-        dp_y = cy - int(bh * 0.10)
-        self._draw_dpad(dp_x, dp_y, int(bw * 0.05))
-
-        # ===== أزرار الأكشن (△ ○ × □) =====
-        ab_x = cx + int(bw * 0.24)
-        ab_y = cy - int(bh * 0.10)
-        btn_r = int(bw * 0.025)
-        btn_sp = int(bw * 0.055)
-        # △
-        self._draw_action_btn(ab_x, ab_y - btn_sp, btn_r, "#4a8c7e", "△")
-        # ○
-        self._draw_action_btn(ab_x + btn_sp, ab_y, btn_r, "#c44c5c", "○")
-        # ×
-        self._draw_action_btn(ab_x, ab_y + btn_sp, btn_r, "#5c7cc4", "×")
-        # □
-        self._draw_action_btn(ab_x - btn_sp, ab_y, btn_r, "#c47cb4", "□")
-
-        # ===== أزرار Options / Create =====
-        opt_y = cy - int(bh * 0.22)
-        # Create (يسار)
-        self.create_rectangle(cx - int(bw * 0.12) - 6, opt_y - 3,
-                              cx - int(bw * 0.12) + 6, opt_y + 3,
-                              fill="#3a3d42", outline="#4a4d52")
-        # Options (يمين)
-        self.create_rectangle(cx + int(bw * 0.12) - 6, opt_y - 3,
-                              cx + int(bw * 0.12) + 6, opt_y + 3,
-                              fill="#3a3d42", outline="#4a4d52")
-
-        # ===== زر PS في الأسفل =====
-        ps_y = cy + int(bh * 0.35)
-        self.create_oval(cx - 8, ps_y - 8, cx + 8, ps_y + 8,
-                        fill="#1a1d22", outline="#3a3d42")
-        self.create_text(cx, ps_y, text="P", fill="#5a5d62",
-                        font=("Segoe UI", 7, "bold"))
-
-        # ===== Mic button =====
-        mic_y = tp_y + tp_h//2 + 24
-        self.create_oval(cx - 5, mic_y - 5, cx + 5, mic_y + 5,
-                        fill="#1a1d22", outline="#ff6a00", width=1)
-
-        # ===== L1/R1 L2/R2 أعلى =====
-        sh_y = cy - int(bh * 0.42)
-        # L1
-        self.create_rectangle(cx - int(bw * 0.38), sh_y,
-                              cx - int(bw * 0.22), sh_y + 8,
-                              fill="#2a2d32", outline="#3a3d3a")
-        # R1
-        self.create_rectangle(cx + int(bw * 0.22), sh_y,
-                              cx + int(bw * 0.38), sh_y + 8,
-                              fill="#2a2d32", outline="#3a3d3a")
-        # L2
-        self.create_rectangle(cx - int(bw * 0.40), sh_y - 10,
-                              cx - int(bw * 0.20), sh_y - 2,
-                              fill="#222528", outline="#3a3d3a")
-        # R2
-        self.create_rectangle(cx + int(bw * 0.20), sh_y - 10,
-                              cx + int(bw * 0.40), sh_y - 2,
-                              fill="#222528", outline="#3a3d3a")
-
-        # ===== نص النوع =====
-        self.create_text(cx, cy + int(bh * 0.50),
-                        text="DualSense™", fill="#3a4050",
-                        font=("Segoe UI", 9, "italic"))
-
-    def _draw_ps5_body(self, cx, cy, bw, bh, gw, gh, fill, outline):
-        """رسم شكل جسم PS5 مع القبضات"""
+    def _draw_body(self, bg):
+        """جسم gamepad عام متماثل (winged) — ليس DualSense: بدون غطاء أبيض ولا touchpad."""
+        W, H, cx, cy, bw, bh = self._body_metrics()
+        sag = 0.05 if self.ctrl_type == "ps5" else 0.02   # ps4 = أعلى استقامة (تجميلي)
+        gr = int(bw * 0.16)
         pts = []
-        # الجزء العلوي (قوس)
-        steps = 24
-        for i in range(steps + 1):
-            a = math.pi + math.pi * i / steps
-            x = cx + int(bw * 0.48 * math.cos(a))
-            y = cy - int(bh * 0.44) + int(bh * 0.10 * math.sin(a))
-            pts.extend([x, y])
-        # الجانب الأيمن + القبضة اليمنى
-        pts.extend([
-            cx + int(bw * 0.48), cy - int(bh * 0.34),
-            cx + int(bw * 0.50), cy - int(bh * 0.10),
-            cx + int(bw * 0.46), cy + int(bh * 0.10),
-            cx + int(bw * 0.38), cy + int(bh * 0.28),
-            cx + int(bw * 0.32), cy + int(bh * 0.50),
-            cx + int(bw * 0.28), cy + int(bh * 0.55),
-            cx + int(bw * 0.18), cy + int(bh * 0.55),
-            cx + int(bw * 0.14), cy + int(bh * 0.48),
-        ])
-        # الأسفل
-        pts.extend([
-            cx + int(bw * 0.06), cy + int(bh * 0.38),
-            cx, cy + int(bh * 0.42),
-            cx - int(bw * 0.06), cy + int(bh * 0.38),
-        ])
-        # القبضة اليسرى
-        pts.extend([
-            cx - int(bw * 0.14), cy + int(bh * 0.48),
-            cx - int(bw * 0.18), cy + int(bh * 0.55),
-            cx - int(bw * 0.28), cy + int(bh * 0.55),
-            cx - int(bw * 0.32), cy + int(bh * 0.50),
-            cx - int(bw * 0.38), cy + int(bh * 0.28),
-            cx - int(bw * 0.46), cy + int(bh * 0.10),
-            cx - int(bw * 0.50), cy - int(bh * 0.10),
-            cx - int(bw * 0.48), cy - int(bh * 0.34),
-        ])
-        self.create_polygon(pts, fill=fill, outline=outline, width=2, smooth=True)
+        # top crossbar — shallow bow, left→right
+        N = 12
+        for i in range(N + 1):
+            t = i / N
+            x = cx - bw * 0.34 + (bw * 0.68) * t
+            y = cy - bh * 0.40 + bh * sag * math.sin(math.pi * t)
+            pts.append((x, y))
+        # right shoulder
+        pts.append((cx + bw * 0.50, cy - bh * 0.18))
+        # right grip lobe — half circle sweeping top→outward→bottom
+        gcx, gcy = cx + bw * 0.36, cy + bh * 0.30
+        for i in range(11):
+            a = -math.pi / 2 + math.pi * (i / 10)
+            pts.append((gcx + gr * math.cos(a), gcy + gr * math.sin(a)))
+        # bottom underbelly to center
+        pts.append((cx, cy + bh * 0.30))
+        # left grip lobe (mirror)
+        gcx = cx - bw * 0.36
+        for i in range(11):
+            a = math.pi / 2 + math.pi * (i / 10)
+            pts.append((gcx + gr * math.cos(a), gcy + gr * math.sin(a)))
+        # left shoulder + back to crossbar start
+        pts.append((cx - bw * 0.50, cy - bh * 0.18))
+        flat = [c for p in pts for c in p]
 
-    def _draw_ps5_top_shell(self, cx, cy, bw, top_h, fill, hi_fill):
-        """رسم الغطاء الأبيض العلوي لـ PS5"""
-        pts = []
-        steps = 20
-        for i in range(steps + 1):
-            a = math.pi + math.pi * i / steps
-            x = cx + int(bw * 0.46 * math.cos(a))
-            y = cy - int(top_h * 0.75) + int(top_h * 0.12 * math.sin(a))
-            pts.extend([x, y])
-        # انحناء الجوانب
-        pts.extend([
-            cx + int(bw * 0.46), cy - int(top_h * 0.63),
-            cx + int(bw * 0.48), cy - int(top_h * 0.20),
-            cx + int(bw * 0.42), cy + int(top_h * 0.10),
-            cx + int(bw * 0.30), cy + int(top_h * 0.30),
-        ])
-        # المنحنى السفلي
-        for i in range(steps + 1):
-            a = math.pi * i / steps
-            x = cx + int(bw * 0.30 * math.cos(a))
-            y = cy + int(top_h * 0.30) + int(top_h * 0.08 * math.sin(a))
-            pts.extend([x, y])
-        pts.extend([
-            cx - int(bw * 0.30), cy + int(top_h * 0.30),
-            cx - int(bw * 0.42), cy + int(top_h * 0.10),
-            cx - int(bw * 0.48), cy - int(top_h * 0.20),
-            cx - int(bw * 0.46), cy - int(top_h * 0.63),
-        ])
-        self.create_polygon(pts, fill=fill, outline="#c0c3c8", width=1, smooth=True)
-        # خط إضاءة علوي (highlight)
-        hi_pts = []
-        for i in range(steps + 1):
-            a = math.pi + math.pi * i / steps
-            x = cx + int(bw * 0.40 * math.cos(a))
-            y = cy - int(top_h * 0.70) + int(top_h * 0.06 * math.sin(a))
-            hi_pts.extend([x, y])
-        for i in range(steps, -1, -1):
-            a = math.pi + math.pi * i / steps
-            x = cx + int(bw * 0.38 * math.cos(a))
-            y = cy - int(top_h * 0.68) + int(top_h * 0.04 * math.sin(a))
-            hi_pts.extend([x, y])
-        if len(hi_pts) >= 6:
-            self.create_polygon(hi_pts, fill=hi_fill, outline="", smooth=True)
+        # (1) drop shadow
+        sh = [c + (6 if i % 2 == 0 else 7) for i, c in enumerate(flat)]
+        self.create_polygon(sh, fill=self._hex(self._blend(bg, (0, 0, 0), 0.55)),
+                            outline="", smooth=True)
+        # (2) matte base body
+        self.create_polygon(flat, fill=self._hex((34, 37, 44)),
+                            outline=self._hex((18, 20, 26)), width=2, smooth=True)
+        # (3) restrained top sheen + bright rim (keep body matte so LED is hero)
+        sheen = []
+        for i in range(N + 1):
+            t = i / N
+            x = cx - bw * 0.30 + (bw * 0.60) * t
+            y = cy - bh * 0.36 + bh * sag * math.sin(math.pi * t)
+            sheen.append((x, y))
+        sheen += [(cx + bw * 0.30, cy - bh * 0.04), (cx - bw * 0.30, cy - bh * 0.04)]
+        self.create_polygon([c for p in sheen for c in p],
+                            fill=self._hex((52, 56, 66)), outline="", smooth=True)
+        self.create_line(cx - bw * 0.32, cy - bh * 0.40, cx + bw * 0.32, cy - bh * 0.40,
+                        fill=self._hex((90, 96, 110)), width=2, capstyle=tk.ROUND)
+        # center faceplate spine
+        self.create_rectangle(cx - bw * 0.20, cy - bh * 0.10, cx + bw * 0.20, cy + bh * 0.20,
+                            fill=self._hex((26, 28, 34)), outline=self._hex((40, 43, 50)), width=1)
 
-    def _draw_ps5_lightbar(self, tp_x, tp_y, tp_w, tp_h, led, bg_rgb):
-        """رسم شريط الإضاءة حول التاتش باد — التزامن 100%"""
-        strip_w = 4
-        # --- التوهج (glow) ---
-        for i in range(self._glow_layers, 0, -1):
-            alpha = 0.08 + 0.04 * (self._glow_layers - i)
-            glow_color = self._blend(bg_rgb, led, alpha)
-            expand = i * 4
-            # يسار
-            self.create_rectangle(
-                tp_x - tp_w//2 - strip_w - expand, tp_y - tp_h//2 - expand,
-                tp_x - tp_w//2, tp_y + tp_h//2 + expand,
-                fill=self._hex(glow_color), outline="")
-            # يمين
-            self.create_rectangle(
-                tp_x + tp_w//2, tp_y - tp_h//2 - expand,
-                tp_x + tp_w//2 + strip_w + expand, tp_y + tp_h//2 + expand,
-                fill=self._hex(glow_color), outline="")
-            # أعلى
-            self.create_rectangle(
-                tp_x - tp_w//2 - expand, tp_y - tp_h//2 - strip_w - expand,
-                tp_x + tp_w//2 + expand, tp_y - tp_h//2,
-                fill=self._hex(glow_color), outline="")
+    def _draw_controls(self, bg):
+        """عناصر تحكم محايدة: عصوان + دي‑باد + 4 أزرار نقطية (بدون رموز سوني)."""
+        W, H, cx, cy, bw, bh = self._body_metrics()
+        # analog sticks (reuse generic helper)
+        self._draw_joystick(cx - int(bw * 0.30), cy + int(bh * 0.18), int(bw * 0.072), (34, 37, 44))
+        self._draw_joystick(cx + int(bw * 0.30), cy + int(bh * 0.18), int(bw * 0.072), (34, 37, 44))
+        # d-pad (generic plus)
+        self._draw_dpad(cx - int(bw * 0.20), cy - int(bh * 0.06), int(bw * 0.055))
+        # four neutral action buttons in a diamond (NO △○×□)
+        abx, aby = cx + int(bw * 0.20), cy - int(bh * 0.06)
+        sp = int(bw * 0.058); r = max(4, int(bw * 0.030))
+        self._draw_action_btn(abx,      aby - sp, r)
+        self._draw_action_btn(abx + sp, aby,      r)
+        self._draw_action_btn(abx,      aby + sp, r)
+        self._draw_action_btn(abx - sp, aby,      r)
+        # shoulder bumpers on the crossbar
+        by = cy - int(bh * 0.44); bwid = int(bw * 0.14); bht = max(4, int(H * 0.03))
+        for sx in (cx - int(bw * 0.30), cx + int(bw * 0.30) - bwid):
+            self.create_rectangle(sx, by, sx + bwid, by + bht,
+                                fill=self._hex((28, 31, 38)), outline=self._hex((44, 48, 56)))
+        # neutral home pill (no P/PS text)
+        hp = int(bw * 0.05)
+        self.create_rectangle(cx - hp, cy + int(bh * 0.38), cx + hp, cy + int(bh * 0.42),
+                            fill=self._hex((24, 26, 32)), outline=self._hex((52, 70, 92)))
 
-        # --- الشريط الفعلي ---
-        bar_col = self._hex(led)
-        bright_led = self._blend(led, (255,255,255), 0.3)
-        bar_hi = self._hex(bright_led)
-        # يسار
-        self.create_rectangle(
-            tp_x - tp_w//2 - strip_w, tp_y - tp_h//2,
-            tp_x - tp_w//2, tp_y + tp_h//2,
-            fill=bar_col, outline="")
-        # يمين
-        self.create_rectangle(
-            tp_x + tp_w//2, tp_y - tp_h//2,
-            tp_x + tp_w//2 + strip_w, tp_y + tp_h//2,
-            fill=bar_col, outline="")
-        # أعلى
-        self.create_rectangle(
-            tp_x - tp_w//2, tp_y - tp_h//2 - strip_w,
-            tp_x + tp_w//2, tp_y - tp_h//2,
-            fill=bar_col, outline="")
-        # خط ساطع في المنتصف
-        self.create_line(
-            tp_x - tp_w//2 - strip_w//2, tp_y - tp_h//2,
-            tp_x - tp_w//2 - strip_w//2, tp_y + tp_h//2,
-            fill=bar_hi, width=1)
-        self.create_line(
-            tp_x + tp_w//2 + strip_w//2, tp_y - tp_h//2,
-            tp_x + tp_w//2 + strip_w//2, tp_y + tp_h//2,
-            fill=bar_hi, width=1)
-        self.create_line(
-            tp_x - tp_w//2, tp_y - tp_h//2 - strip_w//2,
-            tp_x + tp_w//2, tp_y - tp_h//2 - strip_w//2,
-            fill=bar_hi, width=1)
+    def _draw_action_btn(self, x, y, r, ring_rgb=(90, 150, 210)):
+        """زر محايد بدون أي رمز سوني — حلقة لونية بسيطة."""
+        self.create_oval(x - r - 1, y - r + 1, x + r + 1, y + r + 3, fill="#0a0c10", outline="")
+        self.create_oval(x - r, y - r, x + r, y + r,
+                        fill=self._hex((30, 33, 40)), outline=self._hex((46, 50, 58)), width=1)
+        self.create_oval(x - r + 2, y - r + 2, x + r - 2, y + r - 2,
+                        outline=self._hex(ring_rgb), width=2)
+        hi = max(1, int(r * 0.35))
+        hx, hy = x - int(r * 0.4), y - int(r * 0.4)
+        self.create_oval(hx - hi, hy - hi, hx + hi, hy + hi, fill=self._hex((70, 74, 84)), outline="")
 
-    # ==================== PS4 DualShock 4 ====================
-    def _draw_ps4(self):
-        W, H = self._width, self._height
-        cx, cy = W // 2, H // 2 + 10
-        bg_rgb = self._parse_bg()
-        led = self._led_color
+    # ==================== LED strip (per-mode glow) ====================
+    def _glow_capsule(self, x0, x1, y, half_t, color, layers, step, base_alpha, alpha_gain, bg):
+        """طبقات كبسولة متداخلة للخارج (مستطيل + غطاءان دائريان) = توهّج ناعم."""
+        layers = min(12, max(1, int(layers)))
+        for i in range(layers, 0, -1):
+            alpha = base_alpha + alpha_gain * (layers - i)
+            grow = i * step
+            col = self._hex(self._blend(bg, color, alpha))
+            self.create_rectangle(x0, y - half_t - grow, x1, y + half_t + grow, fill=col, outline="")
+            self.create_oval(x0 - half_t - grow, y - half_t - grow, x0 + half_t + grow, y + half_t + grow, fill=col, outline="")
+            self.create_oval(x1 - half_t - grow, y - half_t - grow, x1 + half_t + grow, y + half_t + grow, fill=col, outline="")
 
-        bw = int(W * 0.54)
-        bh = int(H * 0.55)
-        grip_w = int(bw * 0.20)
-        grip_h = int(bh * 0.68)
+    def _draw_led_strip(self, led, bg):
+        """شريط LED أفقي = العنصر البطل؛ يتبدّل توقيع توهّجه حسب self._mode."""
+        W, H, cx, cy, bw, bh = self._body_metrics()
+        y0 = cy - int(bh * 0.40)
+        hw = int(bw * 0.40); x0 = cx - hw; x1 = cx + hw
+        th = max(6, int(H * 0.045)); half_t = th // 2
+        phase = self._anim
+        white = (255, 255, 255)
+        mode = self._mode
 
-        # ===== ظل =====
-        shadow_off = 5
-        shadow_col = self._hex(self._blend(bg_rgb, (0,0,0), 0.5))
-        self._draw_ps4_body(cx + shadow_off, cy + shadow_off, bw, bh, grip_w, grip_h, shadow_col, shadow_col)
+        def hsv(h):
+            r, g, b = colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0)
+            return (int(r * 255), int(g * 255), int(b * 255))
 
-        # ===== الجسم الرئيسي =====
-        body_col = (35, 35, 40)
-        self._draw_ps4_body(cx, cy, bw, bh, grip_w, grip_h,
-                           self._hex(body_col), self._hex((25, 25, 30)))
+        def core(col, x_a=x0, x_b=x1, fil=True):
+            self.create_rectangle(x_a, y0 - half_t, x_b, y0 + half_t, fill=self._hex(col), outline="")
+            self.create_oval(x_a - half_t, y0 - half_t, x_a + half_t, y0 + half_t, fill=self._hex(col), outline="")
+            self.create_oval(x_b - half_t, y0 - half_t, x_b + half_t, y0 + half_t, fill=self._hex(col), outline="")
+            if fil:
+                self.create_line(x_a, y0, x_b, y0, fill=self._hex(self._blend(col, white, 0.55)), width=max(2, th // 4))
+                self.create_line(x_a, y0 - half_t + 1, x_b, y0 - half_t + 1, fill=self._hex(self._blend(col, white, 0.85)), width=1)
 
-        # ===== LIGHTBAR — أعلى الكنترولر (شريط عريض) =====
-        self._draw_ps4_lightbar(cx, cy, bw, bh, led, bg_rgb)
+        def pool():
+            self.create_oval(x0, y0 + th, x1, y0 + th * 2,
+                            fill=self._hex(self._blend(bg, led, 0.06)), outline="")
 
-        # ===== Touchpad =====
-        tp_w = int(bw * 0.40)
-        tp_h = int(bh * 0.25)
-        tp_x = cx
-        tp_y = cy - int(bh * 0.08)
-        # Touchpad مع لمعة
-        self.create_rectangle(tp_x - tp_w//2, tp_y - tp_h//2,
-                              tp_x + tp_w//2, tp_y + tp_h//2,
-                              fill="#1e2128", outline="#2e3138", width=2)
-        # خط لمعة علوي
-        self.create_rectangle(tp_x - tp_w//2 + 3, tp_y - tp_h//2 + 2,
-                              tp_x + tp_w//2 - 3, tp_y - tp_h//2 + 5,
-                              fill="#2a2d35", outline="")
-        # خط تقسيم التاتش باد
-        self.create_line(tp_x, tp_y - tp_h//2 + 4, tp_x, tp_y + tp_h//2 - 4,
-                        fill="#2e3138", width=1)
+        def slices(bright_fn, color_fn, n=24):
+            sw = (x1 - x0) / n
+            for k in range(n):
+                sx = x0 + k * sw
+                self.create_rectangle(sx, y0 - half_t, sx + sw + 1, y0 + half_t,
+                                    fill=self._hex(color_fn(k, bright_fn(k))), outline="")
+            self.create_oval(x0 - half_t, y0 - half_t, x0 + half_t, y0 + half_t, fill=self._hex(color_fn(0, 1.0)), outline="")
+            self.create_oval(x1 - half_t, y0 - half_t, x1 + half_t, y0 + half_t, fill=self._hex(color_fn(n - 1, 1.0)), outline="")
 
-        # ===== Analog Sticks =====
-        stick_r = int(bw * 0.060)
-        ls_x = cx - int(bw * 0.18)
-        ls_y = cy + int(bh * 0.18)
-        self._draw_joystick(ls_x, ls_y, stick_r, body_col)
-        rs_x = cx + int(bw * 0.18)
-        rs_y = cy + int(bh * 0.18)
-        self._draw_joystick(rs_x, rs_y, stick_r, body_col)
-
-        # ===== D-Pad =====
-        dp_x = cx - int(bw * 0.26)
-        dp_y = cy - int(bh * 0.06)
-        self._draw_dpad(dp_x, dp_y, int(bw * 0.045))
-
-        # ===== أزرار الأكشن =====
-        ab_x = cx + int(bw * 0.26)
-        ab_y = cy - int(bh * 0.06)
-        btn_r = int(bw * 0.022)
-        btn_sp = int(bw * 0.052)
-        self._draw_action_btn(ab_x, ab_y - btn_sp, btn_r, "#4a8c7e", "△")
-        self._draw_action_btn(ab_x + btn_sp, ab_y, btn_r, "#c44c5c", "○")
-        self._draw_action_btn(ab_x, ab_y + btn_sp, btn_r, "#5c7cc4", "×")
-        self._draw_action_btn(ab_x - btn_sp, ab_y, btn_r, "#c47cb4", "□")
-
-        # ===== Share / Options =====
-        opt_y = cy - int(bh * 0.16)
-        self.create_rectangle(cx - int(bw * 0.11) - 5, opt_y - 3,
-                              cx - int(bw * 0.11) + 5, opt_y + 3,
-                              fill="#2e3138", outline="#3e4148")
-        self.create_rectangle(cx + int(bw * 0.11) - 5, opt_y - 3,
-                              cx + int(bw * 0.11) + 5, opt_y + 3,
-                              fill="#2e3138", outline="#3e4148")
-
-        # ===== PS Button =====
-        ps_y = cy + int(bh * 0.36)
-        self.create_oval(cx - 9, ps_y - 9, cx + 9, ps_y + 9,
-                        fill="#1a1d22", outline="#3a3d42")
-        self.create_text(cx, ps_y, text="PS", fill="#5a5d62",
-                        font=("Segoe UI", 6, "bold"))
-
-        # ===== Speaker grille =====
-        sp_y = cy + int(bh * 0.06)
-        for i in range(5):
-            sy = sp_y + i * 4
-            self.create_line(cx - 12, sy, cx + 12, sy, fill="#2a2d32", width=1)
-
-        # ===== L1/R1 L2/R2 =====
-        sh_y = cy - int(bh * 0.40)
-        self.create_rectangle(cx - int(bw * 0.40), sh_y,
-                              cx - int(bw * 0.22), sh_y + 8,
-                              fill="#2a2d32", outline="#3a3d3a")
-        self.create_rectangle(cx + int(bw * 0.22), sh_y,
-                              cx + int(bw * 0.40), sh_y + 8,
-                              fill="#2a2d32", outline="#3a3d3a")
-        self.create_rectangle(cx - int(bw * 0.42), sh_y - 10,
-                              cx - int(bw * 0.20), sh_y - 2,
-                              fill="#222528", outline="#3a3d3a")
-        self.create_rectangle(cx + int(bw * 0.20), sh_y - 10,
-                              cx + int(bw * 0.42), sh_y - 2,
-                              fill="#222528", outline="#3a3d3a")
-
-        # ===== نص =====
-        self.create_text(cx, cy + int(bh * 0.52),
-                        text="DUALSHOCK®4", fill="#3a4050",
-                        font=("Segoe UI", 9, "italic"))
-
-    def _draw_ps4_body(self, cx, cy, bw, bh, gw, gh, fill, outline):
-        """رسم شكل جسم PS4 — أكثر حدة وزوايا من PS5"""
-        pts = []
-        steps = 18
-        for i in range(steps + 1):
-            a = math.pi + math.pi * i / steps
-            x = cx + int(bw * 0.46 * math.cos(a))
-            y = cy - int(bh * 0.42) + int(bh * 0.08 * math.sin(a))
-            pts.extend([x, y])
-        # جانب أيمن + قبضة
-        pts.extend([
-            cx + int(bw * 0.46), cy - int(bh * 0.34),
-            cx + int(bw * 0.50), cy - int(bh * 0.08),
-            cx + int(bw * 0.44), cy + int(bh * 0.12),
-            cx + int(bw * 0.36), cy + int(bh * 0.30),
-            cx + int(bw * 0.30), cy + int(bh * 0.50),
-            cx + int(bw * 0.24), cy + int(bh * 0.56),
-            cx + int(bw * 0.16), cy + int(bh * 0.54),
-            cx + int(bw * 0.12), cy + int(bh * 0.46),
-        ])
-        # أسفل
-        pts.extend([
-            cx + int(bw * 0.06), cy + int(bh * 0.40),
-            cx, cy + int(bh * 0.44),
-            cx - int(bw * 0.06), cy + int(bh * 0.40),
-        ])
-        # قبضة يسرى
-        pts.extend([
-            cx - int(bw * 0.12), cy + int(bh * 0.46),
-            cx - int(bw * 0.16), cy + int(bh * 0.54),
-            cx - int(bw * 0.24), cy + int(bh * 0.56),
-            cx - int(bw * 0.30), cy + int(bh * 0.50),
-            cx - int(bw * 0.36), cy + int(bh * 0.30),
-            cx - int(bw * 0.44), cy + int(bh * 0.12),
-            cx - int(bw * 0.50), cy - int(bh * 0.08),
-            cx - int(bw * 0.46), cy - int(bh * 0.34),
-        ])
-        self.create_polygon(pts, fill=fill, outline=outline, width=2, smooth=True)
-
-    def _draw_ps4_lightbar(self, cx, cy, bw, bh, led, bg_rgb):
-        """رسم شريط الإضاءة العلوي PS4 — التزامن 100%"""
-        bar_w = int(bw * 0.55)
-        bar_h = 6
-        bar_y = cy - int(bh * 0.46)
-
-        # --- التوهج ---
-        for i in range(self._glow_layers, 0, -1):
-            alpha = 0.06 + 0.04 * (self._glow_layers - i)
-            glow_color = self._blend(bg_rgb, led, alpha)
-            expand = i * 5
-            self.create_rectangle(
-                cx - bar_w//2 - expand, bar_y - bar_h//2 - expand,
-                cx + bar_w//2 + expand, bar_y + bar_h//2 + expand,
-                fill=self._hex(glow_color), outline="")
-
-        # --- الشريط ---
-        bar_col = self._hex(led)
-        bright_led = self._blend(led, (255,255,255), 0.35)
-        self.create_rectangle(
-            cx - bar_w//2, bar_y - bar_h//2,
-            cx + bar_w//2, bar_y + bar_h//2,
-            fill=bar_col, outline="")
-        # خط ساطع
-        self.create_line(
-            cx - bar_w//2, bar_y,
-            cx + bar_w//2, bar_y,
-            fill=self._hex(bright_led), width=2)
+        if mode == "Sequence":
+            self._glow_capsule(x0, x1, y0, half_t, led, 8, max(3, int(H * 0.016)), 0.05, 0.04, bg)
+            cells = 7; gap = 2; cw = (x1 - x0 - gap * (cells - 1)) / cells
+            comet = (phase // 8) % cells
+            for k in range(cells):
+                cx0 = x0 + k * (cw + gap); cx1 = cx0 + cw
+                col = self._blend(led, white, 0.5) if k == comet else self._blend(led, white, 0.06 * k)
+                self._glow_capsule(cx0, cx1, y0, half_t, led, 3, 2, 0.06, 0.04, bg)
+                core(col, cx0, cx1, fil=False)
+        elif mode == "Random":
+            self._glow_capsule(x0 + int(0.04 * hw), x1 + int(0.04 * hw), y0, half_t, led, 6, 3, 0.05, 0.04, bg)
+            cells = 7; gap = 3; cw = (x1 - x0 - gap * (cells - 1)) / cells
+            tbl = {0: 0.4, 1: 0.7, 2: 1.0}
+            for k in range(cells):
+                cx0 = x0 + k * (cw + gap); cx1 = cx0 + cw
+                br = tbl[((k * 73 + 29) % 100) % 3]
+                core(self._blend(bg, led, br), cx0, cx1, fil=False)
+        elif mode == "Rainbow":
+            self._glow_capsule(x0, x1, y0, half_t, led, 6, max(3, int(H * 0.016)), 0.05, 0.05, bg)
+            slices(lambda k: 1.0, lambda k, b: hsv((phase / 360.0) + k / 24.0))
+        elif mode == "Pulse":
+            self._glow_capsule(x0, x1, y0, half_t, led, 12, int(H * 0.024), 0.05, 0.05, bg)
+            self.create_rectangle(x0, y0 - (half_t - 1), x1, y0 + (half_t - 1), fill=self._hex(led), outline="")
+            core(led); pool()
+        elif mode == "Flash":
+            self._glow_capsule(x0, x1, y0, half_t, led, 2, 2, 0.18, 0.0, bg)
+            core(led)
+            self.create_rectangle(x0, y0 - half_t, x1, y0 + half_t,
+                                outline=self._hex(self._blend(led, white, 0.6)), width=2)
+        elif mode == "Breathing":
+            self._glow_capsule(x0, x1, y0, half_t, led, 12, int(H * 0.026), 0.03, 0.035, bg)
+            core(led); pool()
+        elif mode == "Heartbeat":
+            gap = max(2, int(hw * 0.1))
+            self._glow_capsule(x0, cx - gap, y0, half_t, led, 5, 3, 0.10, 0.04, bg)
+            self._glow_capsule(cx + gap, x1, y0, half_t, led, 5, 3, 0.10, 0.04, bg)
+            core(led, x0, cx - gap); core(led, cx + gap, x1)
+        elif mode == "Wave":
+            self._glow_capsule(x0, x1, y0, half_t, led, 6, int(H * 0.020), 0.05, 0.045, bg)
+            def wb(k):
+                return 0.35 + 0.65 * (0.5 + 0.5 * math.sin((phase * 0.15) - k * 0.5))
+            slices(wb, lambda k, b: self._blend(bg, led, b))
+        elif mode == "Gradient":
+            wled = self._blend(led, white, 0.85)
+            self._glow_capsule(x0, cx, y0, half_t, led, 6, int(H * 0.018), 0.05, 0.045, bg)
+            self._glow_capsule(cx, x1, y0, half_t, wled, 6, int(H * 0.018), 0.05, 0.045, bg)
+            n = 10; band0 = cx - int(0.15 * (x1 - x0)); band1 = cx + int(0.15 * (x1 - x0))
+            self.create_rectangle(x0, y0 - half_t, band0, y0 + half_t, fill=self._hex(led), outline="")
+            self.create_rectangle(band1, y0 - half_t, x1, y0 + half_t, fill=self._hex(wled), outline="")
+            sw = (band1 - band0) / n
+            for k in range(n):
+                t = k / (n - 1)
+                sx = band0 + k * sw
+                self.create_rectangle(sx, y0 - half_t, sx + sw + 1, y0 + half_t,
+                                    fill=self._hex(self._blend(led, white, 0.85 * t)), outline="")
+            self.create_oval(x0 - half_t, y0 - half_t, x0 + half_t, y0 + half_t, fill=self._hex(led), outline="")
+            self.create_oval(x1 - half_t, y0 - half_t, x1 + half_t, y0 + half_t, fill=self._hex(wled), outline="")
+        else:  # Manual + unknown
+            self._glow_capsule(x0, x1, y0, half_t, led, 10, max(3, int(H * 0.018)), 0.045, 0.05, bg)
+            core(led); pool()
 
     # ==================== عناصر مشتركة ====================
     def _draw_joystick(self, x, y, r, body_col):
@@ -1165,18 +930,6 @@ class Controller3D(tk.Canvas):
         # مركز
         self.create_rectangle(x - s//4, y - s//4, x + s//4, y + s//4,
                              fill="#1a1d22", outline="")
-
-    def _draw_action_btn(self, x, y, r, color, symbol):
-        """رسم زر أكشن مع رمز"""
-        # ظل
-        self.create_oval(x - r - 1, y - r + 1, x + r + 1, y + r + 3,
-                        fill="#0a0c10", outline="")
-        # الزر
-        self.create_oval(x - r, y - r, x + r, y + r,
-                        fill="#1e2025", outline="#2e3035", width=1)
-        # الرمز
-        self.create_text(x, y, text=symbol, fill=color,
-                        font=("Segoe UI", max(8, r), "bold"))
 
 
 # --------------------------- i18n ---------------------------
@@ -1475,7 +1228,10 @@ class App(tk.Tk):
 
     def set_color_hex(self, hx):
         self.preview.configure(bg=hx)
-        if self.engine: self.engine.set_color(hex_to_rgb(hx))
+        rgb = hex_to_rgb(hx)
+        if self.engine: self.engine.set_color(rgb)
+        # recolor the controller widget IMMEDIATELY (don't wait for the 33ms poll)
+        if hasattr(self, 'ctrl3d'): self.ctrl3d.set_led_color(*rgb)
 
     def pick_color(self, e=None):
         c=colorchooser.askcolor(color=self.preview.cget("bg"))[1]
@@ -1496,6 +1252,7 @@ class App(tk.Tk):
         disp = self.mode_disp.get()
         code = display_to_code(self.lang, disp)
         self.engine.set_mode(code)
+        if hasattr(self, 'ctrl3d'): self.ctrl3d.set_mode(code)  # widget glow signature follows mode
         v=float(self.sp.get()); b=float(self.rb.get())
         if code=="Manual": self.status_var.set(self.s["status_manual"])
         elif code=="Sequence": self.status_var.set(self.s["status_sequence"].format(v=v))
