@@ -976,6 +976,7 @@ STR = {
    "battery":"البطارية",
    "mode":"الوضع","interval":"السرعة/الفاصل","rainbow_brightness":"سطوع قوس قزح","flash_duty":"نسبة الوميض",
    "pick_color":"اختيار لون","stop":"إيقاف","quick":"ألوان سريعة",
+   "background":"تشغيل في الخلفية",
    "rgb_fix":"تصحيح RGB/BGR",
    "profiles":"ملفات التعريف","save_profile":"حفظ","delete_profile":"حذف",
    "auto_sleep":"خمول تلقائي","as_minutes":"دقائق","as_action":"الإجراء","as_off":"إطفاء","as_solid":"تثبيت",
@@ -993,6 +994,7 @@ STR = {
    "battery":"Battery",
    "mode":"Mode","interval":"Speed / Interval","rainbow_brightness":"Rainbow Brightness","flash_duty":"Flash Duty",
    "pick_color":"Pick Color","stop":"Stop","quick":"Quick Colors",
+   "background":"Run in background",
    "rgb_fix":"RGB/BGR mapping fix",
    "profiles":"Profiles","save_profile":"Save","delete_profile":"Delete",
    "auto_sleep":"Auto Sleep","as_minutes":"Minutes","as_action":"Action","as_off":"Off","as_solid":"Solid",
@@ -1226,6 +1228,9 @@ class App(tk.Tk):
         btns=ttk.Frame(self.card, style="Card.TFrame"); btns.pack(fill="x", padx=20, pady=(6,14))
         ttk.Button(btns, text=self.s["stop"],  style="Danger.TButton", command=self.on_stop).pack(side="left", padx=6)
         ttk.Button(btns, text=self.s["pick_color"], style="Btn.TButton", command=self.pick_color).pack(side="left", padx=6)
+        # One app, one shortcut: hide the window to the tray but keep the engine
+        # driving the lightbar — same effect as the old separate "Background" icon.
+        ttk.Button(btns, text=self.s["background"], style="Btn.TButton", command=self.go_background).pack(side="left", padx=6)
 
         # حالة
         self.status_var=tk.StringVar(value=self.s["status_manual"])
@@ -1451,7 +1456,8 @@ class App(tk.Tk):
                     ("حفظ", "Save"): self.s["save_profile"],
                     ("حذف", "Delete"): self.s["delete_profile"],
                     ("إيقاف", "Stop"): self.s["stop"],
-                    ("اختيار لون", "Pick Color"): self.s["pick_color"]
+                    ("اختيار لون", "Pick Color"): self.s["pick_color"],
+                    ("تشغيل في الخلفية", "Run in background"): self.s["background"]
                 }
                 
                 for keys, value in button_translations.items():
@@ -1548,6 +1554,15 @@ class App(tk.Tk):
         else:
             self.destroy()
     
+    def go_background(self):
+        """إخفاء النافذة مع إبقاء المحرك يقود الإضاءة — بديل اختصار الخلفية المنفصل."""
+        # status hint, then hide to tray. The engine thread keeps running.
+        try:
+            self.status_var.set(self.s.get("background", "Run in background"))
+        except Exception:
+            pass
+        self.minimize_to_tray()
+
     def minimize_to_tray(self):
         """تصغير النافذة للشريط السفلي (مخفية)"""
         self.withdraw()
