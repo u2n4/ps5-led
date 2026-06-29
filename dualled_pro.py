@@ -34,6 +34,15 @@ LOG_FILE   = CONFIG_DIR / "app.log"
 def log(*a):
     s = " ".join(str(x) for x in a)
     try:
+        # Rotate at ~1 MB so a stuck backend can't grow the log unbounded and fill the disk.
+        try:
+            if LOG_FILE.exists() and LOG_FILE.stat().st_size > 1_048_576:
+                bak = LOG_FILE.with_suffix(".log.1")
+                try: bak.unlink(missing_ok=True)
+                except Exception: pass
+                LOG_FILE.replace(bak)
+        except Exception:
+            pass
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {s}\n")
     except Exception:
@@ -560,6 +569,8 @@ class Engine(threading.Thread):
                 log("engine loop err:", e); time.sleep(0.2)
 
 # --------------------------- Background (headless) ---------------------------
+STOP_SIGNAL = CONFIG_DIR / "stop.signal"
+
 def run_background(off_on_exit=False, stop_after_min=None):
     log("BG: start")
     backend = Backend(prefer=CFG.get("backend","auto"))
@@ -568,6 +579,22 @@ def run_background(off_on_exit=False, stop_after_min=None):
     engine = Engine(backend); engine.start()
     engine.set_color(hex_to_rgb(CFG.get("color","#00aaff")))
     stop_evt = threading.Event()
+
+    # Clear any stale stop signal so the new instance doesn't exit immediately.
+    try: STOP_SIGNAL.unlink(missing_ok=True)
+    except Exception: pass
+
+    # Graceful shutdown on taskkill (no /F), logoff, Ctrl+Break — exits through
+    # the finally block so the lightbar is cleaned up.
+    def _on_signal(*_a):
+        stop_evt.set()
+    for _sig in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        try:
+            import signal as _signal
+            s = getattr(_signal, _sig, None)
+            if s is not None: _signal.signal(s, _on_signal)
+        except Exception:
+            pass
 
     def battery_logger():
         ema = EMA(0.35)
@@ -584,7 +611,15 @@ def run_background(off_on_exit=False, stop_after_min=None):
     threading.Thread(target=timer, daemon=True).start()
 
     try:
-        while not stop_evt.is_set(): time.sleep(0.5)
+        while not stop_evt.is_set():
+            # Stop channel: a companion '--stop' launch (or the Stop shortcut)
+            # drops this file so a non-technical user can halt the hidden process.
+            if STOP_SIGNAL.exists():
+                try: STOP_SIGNAL.unlink(missing_ok=True)
+                except Exception: pass
+                log("BG: stop signal received")
+                break
+            time.sleep(0.5)
     finally:
         try: engine.stop_evt.set()
         except Exception: pass
@@ -1504,7 +1539,12 @@ def main():
     if _instance_already_running():
         _signal_restore_request()
         return False
-    max_instances = int(CFG.get("max_instances", 1))
+    # Clamp config-supplied count so a tampered/corrupt config can't flood the
+    # lock dir with thousands of slot files (config.json is treated as untrusted).
+    try:
+        max_instances = max(1, min(8, int(CFG.get("max_instances", 1) or 1)))
+    except (TypeError, ValueError):
+        max_instances = 1
     if not acquire_slot_lock(max_instances):
         _secondary_instance_restore_and_exit()
         return False
@@ -1517,10 +1557,24 @@ def run_main():
     parser.add_argument("--background", action="store_true", help="run without UI (uses last settings)")
     parser.add_argument("--stop-after", type=float, default=None, help="auto stop after N minutes (background)")
     parser.add_argument("--off-on-exit", action="store_true", help="turn off lightbar when exiting (background)")
+    parser.add_argument("--keep-on-exit", action="store_true", help="keep the lightbar color when the background process exits")
+    parser.add_argument("--stop", action="store_true", help="signal a running --background instance to stop, then exit")
     args = parser.parse_args()
 
+    if args.stop:
+        # Tell a running background instance to shut down (used by the Stop shortcut).
+        try:
+            STOP_SIGNAL.write_text("1", encoding="utf-8")
+            log("CLI: stop signal written")
+        except Exception as e:
+            log("CLI: stop signal failed:", e)
+        return
+
     if args.background:
-        run_background(off_on_exit=args.off_on_exit, stop_after_min=args.stop_after)
+        # Background is invisible, so default to cleaning up the lightbar on exit
+        # unless the user explicitly asks to keep it.
+        off = not args.keep_on_exit if not args.off_on_exit else True
+        run_background(off_on_exit=off, stop_after_min=args.stop_after)
         return
 
     try:
