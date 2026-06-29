@@ -1081,6 +1081,13 @@ class App(tk.Tk):
         # Close/quit — neutral dark, distinct from the red Stop.
         style.configure("Close.TButton", background="#2a3340", foreground=TEXT, padding=10, borderwidth=0)
         style.map("Close.TButton", background=[("active","#3a4658")])
+        # Compact window-control buttons for the top-right corner.
+        style.configure("WinBg.TButton", background="#1d2633", foreground=TEXT,
+                        padding=(10,4), borderwidth=0, font=("Segoe UI", 13))
+        style.map("WinBg.TButton", background=[("active","#273245")])
+        style.configure("WinClose.TButton", background="#7a2230", foreground="#ffe9ec",
+                        padding=(12,4), borderwidth=0, font=("Segoe UI", 13, "bold"))
+        style.map("WinClose.TButton", background=[("active","#e34d4d")])
 
         # ===== Modern dark theming for the remaining native-looking controls =====
         # accent + neutral surfaces used by sliders / combos / checks / entries
@@ -1130,6 +1137,13 @@ class App(tk.Tk):
         self.title_var = tk.StringVar(value=self.s["title"])
         ttk.Label(header, textvariable=self.title_var, style="Header.TLabel").pack(side="left", padx=12, pady=6)
         right=ttk.Frame(header, style="Root.TFrame"); right.pack(side="right")
+
+        # أزرار التحكم بالنافذة في الزاوية العلوية اليمنى: إغلاق (✕) + الخلفية (▁)
+        # Close is the rightmost corner control; background sits just left of it.
+        self.close_btn = ttk.Button(right, text="✕", style="WinClose.TButton", command=self.quit_app)
+        self.close_btn.pack(side="right", padx=(6,10))
+        self.bg_btn = ttk.Button(right, text="▁", style="WinBg.TButton", command=self.go_background)
+        self.bg_btn.pack(side="right", padx=(6,0))
 
         # عرض/نافذة
         self.view_var = tk.StringVar(value=("⛶ "+(self.s["windowed"] if self.attributes("-fullscreen") else self.s["fullscreen"])))
@@ -1232,15 +1246,10 @@ class App(tk.Tk):
         self.as_action.grid(row=0,column=4, padx=6)
 
 
-        # أزرار أساسية
+        # أزرار أساسية (الإغلاق والخلفية انتقلوا للزاوية العلوية اليمنى)
         btns=ttk.Frame(self.card, style="Card.TFrame"); btns.pack(fill="x", padx=20, pady=(6,14))
         ttk.Button(btns, text=self.s["stop"],  style="Danger.TButton", command=self.on_stop).pack(side="left", padx=6)
         ttk.Button(btns, text=self.s["pick_color"], style="Btn.TButton", command=self.pick_color).pack(side="left", padx=6)
-        # One app, one shortcut: hide the window to the tray but keep the engine
-        # driving the lightbar — same effect as the old separate "Background" icon.
-        ttk.Button(btns, text=self.s["background"], style="Btn.TButton", command=self.go_background).pack(side="left", padx=6)
-        # Real quit (engine off, backend closed) — distinct from Stop/Background.
-        ttk.Button(btns, text=self.s["close"], style="Close.TButton", command=self.quit_app).pack(side="right", padx=6)
 
         # حالة
         self.status_var=tk.StringVar(value=self.s["status_manual"])
