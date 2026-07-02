@@ -1,11 +1,11 @@
-# Contributing to DualLED Pro
+# Contributing to PS5 LED
 
 Thanks for your interest! 🎮 Contributions of all sizes are welcome — bug reports, docs, translations, new effects, and code.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/u2n4/dualled-pro.git
+git clone https://github.com/u2n4/ps5-led.git
 cd dualled-pro
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt

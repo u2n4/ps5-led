@@ -1,9 +1,9 @@
 # ============================================================
-#  DualLED Pro - one-shot installer for Windows (PowerShell)
+#  PS5 LED - one-shot installer for Windows (PowerShell)
 #  Preferred path: portable single EXE (NO Python needed).
 #  Fallback path : Python (minimal footprint) + 3 small deps.
 #  Usage (paste in PowerShell):
-#    irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
+#    irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 # ============================================================
 
 $ErrorActionPreference = "Stop"
@@ -15,7 +15,7 @@ function Write-Warn($msg) { Write-Host "    [!]  $msg" -ForegroundColor Yellow }
 
 Write-Host @"
 ============================================
-   DualLED Pro - automatic installer
+   PS5 LED - automatic installer
    PS5 DualSense / PS4 DualShock 4 RGB
 ============================================
 "@ -ForegroundColor Magenta
@@ -25,9 +25,9 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "DualLED-Pro"
 $AppFile    = Join-Path $InstallDir "dualled_pro.py"
 $ReqFile    = Join-Path $InstallDir "requirements.txt"
 $IcoFile    = Join-Path $InstallDir "app.ico"
-$ExeFile    = Join-Path $InstallDir "DualLED-Pro.exe"
-$RawBase    = "https://raw.githubusercontent.com/u2n4/dualled-pro/main"
-$ExeUrl     = "https://github.com/u2n4/dualled-pro/releases/latest/download/DualLED-Pro.exe"
+$ExeFile    = Join-Path $InstallDir "PS5-LED.exe"
+$RawBase    = "https://raw.githubusercontent.com/u2n4/ps5-led/main"
+$ExeUrl     = "https://github.com/u2n4/ps5-led/releases/latest/download/PS5-LED.exe"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 # --- helper: Desktop shortcut (Unicode-safe move; see note below) -------------
@@ -60,7 +60,7 @@ function New-DLShortcut {
 
 function Remove-OldShortcuts {
     $desktop = [Environment]::GetFolderPath("Desktop")
-    foreach ($old in @("DualLED Pro (Background).lnk", "Stop DualLED Background.lnk")) {
+    foreach ($old in @("DualLED Pro.lnk", "DualLED Pro (Background).lnk", "Stop DualLED Background.lnk")) {
         $p = Join-Path $desktop $old
         if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
     }
@@ -69,7 +69,7 @@ function Remove-OldShortcuts {
 # ==============================================================================
 #  PATH A - portable EXE (preferred): one file, zero dependencies, no Python.
 # ==============================================================================
-Write-Step "Downloading DualLED Pro portable (no Python needed) ..."
+Write-Step "Downloading PS5 LED portable (no Python needed) ..."
 $exeOk = $false
 try {
     Invoke-WebRequest -Uri $ExeUrl -OutFile $ExeFile
@@ -83,17 +83,17 @@ if ($exeOk) {
 
     Write-Step "Creating Desktop shortcut ..."
     try {
-        New-DLShortcut -Name "DualLED Pro" -Target $ExeFile -Arguments "" -WindowStyle 1 `
-            -Description "DualLED Pro - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
+        New-DLShortcut -Name "PS5 LED" -Target $ExeFile -Arguments "" -WindowStyle 1 `
+            -Description "PS5 LED - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
         Remove-OldShortcuts
-        Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
+        Write-Ok "Shortcut created on your Desktop: 'PS5 LED'"
     } catch {
         Write-Warn "Could not create the Desktop shortcut ($($_.Exception.Message))."
     }
 
-    Write-Step "Launching DualLED Pro ..."
+    Write-Step "Launching PS5 LED ..."
     Write-Ok "Done! The app window should open now."
-    Write-Host "`n    Next time, just double-click 'DualLED Pro' on your Desktop." -ForegroundColor DarkGray
+    Write-Host "`n    Next time, just double-click 'PS5 LED' on your Desktop." -ForegroundColor DarkGray
     Start-Process -FilePath $ExeFile -WorkingDirectory $InstallDir
     return
 }
@@ -168,7 +168,7 @@ if (-not $py) {
 Write-Ok ("Using " + (& $py --version 2>&1))
 
 # --- 2. Download the app -----------------------------------------------------
-Write-Step "Downloading DualLED Pro ..."
+Write-Step "Downloading PS5 LED ..."
 Invoke-WebRequest -Uri "$RawBase/dualled_pro.py"   -OutFile $AppFile
 Invoke-WebRequest -Uri "$RawBase/requirements.txt" -OutFile $ReqFile
 # DualSense SVG asset - required for the accurate PS5 controller view.
@@ -198,17 +198,17 @@ try {
     $launcher = if (Test-Path $pyw) { $pyw } else { $pyExe }
     $iconArg  = if (Test-Path $IcoFile) { $IcoFile } else { "$launcher,0" }
 
-    New-DLShortcut -Name "DualLED Pro" -Target $launcher `
+    New-DLShortcut -Name "PS5 LED" -Target $launcher `
         -Arguments ('"' + $AppFile + '"') -WindowStyle 1 `
-        -Description "DualLED Pro - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
+        -Description "PS5 LED - PS5/PS4 RGB lightbar control" -IconPath $iconArg | Out-Null
     Remove-OldShortcuts
-    Write-Ok "Shortcut created on your Desktop: 'DualLED Pro'"
+    Write-Ok "Shortcut created on your Desktop: 'PS5 LED'"
 } catch {
     Write-Warn "Could not create the Desktop shortcut ($($_.Exception.Message)). You can still run the app from PowerShell."
 }
 
 # --- 5. Launch ---------------------------------------------------------------
-Write-Step "Launching DualLED Pro ..."
+Write-Step "Launching PS5 LED ..."
 Write-Ok "Done! The app window should open now."
-Write-Host "`n    Next time, just double-click 'DualLED Pro' on your Desktop." -ForegroundColor DarkGray
+Write-Host "`n    Next time, just double-click 'PS5 LED' on your Desktop." -ForegroundColor DarkGray
 & $py $AppFile

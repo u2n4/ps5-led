@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DualLED Pro — v8 DualSense SVG Edition
+PS5 LED — v2 (DualSense SVG Edition)
 =======================================
 - رسم DualSense دقيق من أصل SVG مرخّص، بشريطي إضاءة يحضنان التاتشباد كما في اليد الحقيقية
 - تتزامن إضاءة اليد المعروضة مع اللون الحقيقي على اليد الفعلية بنسبة 100%
@@ -1309,7 +1309,7 @@ class Controller3D(tk.Canvas):
 # --------------------------- i18n ---------------------------
 STR = {
  "ar": {
-   "title":"🎮 تحكّم إضاءة DualSense",
+   "title":"🎮 PS5 LED",
    "subtitle":"التغييرات تُطبّق فورًا — زر الإيقاف يثبت اللون.",
    "lang":"اللغة","fullscreen":"ملء الشاشة","windowed":"نافذة",
    "battery":"البطارية",
@@ -1328,7 +1328,7 @@ STR = {
    "ctrl_type":"نموذج اليد","ctrl_ps5":"PS5 DualSense","ctrl_ps4":"PS4 DualShock"
  },
  "en": {
-   "title":"🎮 DualSense LED Control",
+   "title":"🎮 PS5 LED",
    "subtitle":"Instant apply — Stop restores last solid color.",
    "lang":"Language","fullscreen":"Fullscreen","windowed":"Windowed",
    "battery":"Battery",
@@ -1798,7 +1798,7 @@ class App(tk.Tk):
             for _p in (_here / "app.ico", _here / "assets" / "app.ico"):
                 if _p.exists(): _ico = str(_p); break
         except Exception: pass
-        self.tray = TrayIcon("DualLED Pro", _ico, _tray_menu, self._tray_q.put)
+        self.tray = TrayIcon("PS5 LED", _ico, _tray_menu, self._tray_q.put)
 
         # ابدأ الاتصال
         self.after(50, self.post_init)
@@ -1905,7 +1905,14 @@ class App(tk.Tk):
     def set_color_hex(self, hx):
         self.preview.configure(bg=hx)
         rgb = hex_to_rgb(hx)
-        if self.engine: self.engine.set_color(rgb)
+        if self.engine:
+            # اختيار لون = قصدك لون ثابت → تحويل تلقائي لوضع "يدوي" لو كان وضع متحرك
+            if self.engine.mode != "Manual":
+                self.engine.set_mode("Manual")
+                self.mode_disp.set(code_to_display(self.lang, "Manual"))
+                if hasattr(self, 'ctrl3d'): self.ctrl3d.set_mode("Manual")
+                self.status_var.set(self.s["status_manual"])
+            self.engine.set_color(rgb)
         # recolor the controller widget IMMEDIATELY (don't wait for the 33ms poll)
         if hasattr(self, 'ctrl3d'): self.ctrl3d.set_led_color(*rgb)
 

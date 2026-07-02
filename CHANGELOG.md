@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-02
+
+### Changed
+- **App renamed to "PS5 LED"** (window title, tray, shortcut, EXE, repository).
+- Picking any color (embedded picker or quick colors) now **switches to Manual mode
+  automatically** — the color you pick is what you get, even if an animated mode was running.
+
+[2.2.0]: https://github.com/u2n4/ps5-led/releases/tag/v2.2.0
+
 ## [2.1.0] - 2026-07-02
 
 ### Added
@@ -16,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Smaller portable EXE (14.9 → 12.8 MB): unused standard-library modules excluded.
 - Dropped the unused `psutil` dependency (battery reading comes from the controller itself).
 
-[2.1.0]: https://github.com/u2n4/dualled-pro/releases/tag/v2.1.0
+[2.1.0]: https://github.com/u2n4/ps5-led/releases/tag/v2.1.0
 
 ## [2.0.0] - 2026-07-02
 
@@ -46,12 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The generic pseudo-3D gamepad drawing for PS5 (replaced by the accurate SVG view;
   PS4 keeps the classic top-strip drawing that matches the DS4's real lightbar position).
 
-[2.0.0]: https://github.com/u2n4/dualled-pro/releases/tag/v2.0.0
+[2.0.0]: https://github.com/u2n4/ps5-led/releases/tag/v2.0.0
 
 ## [1.0.0] - 2026-06-29
 
 ### Added
-- Initial public release of **DualLED Pro**.
+- Initial public release of **PS5 LED**.
 - 10 lighting modes: Manual, Rainbow, Pulse, Flash, Breathing, Heartbeat, Wave, Gradient, Sequence, Random.
 - Live 3D controller view that mirrors the real lightbar color in sync.
 - Automatic PS5 (DualSense) / PS4 (DualShock 4) detection.
@@ -62,4 +71,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Animated starfield background (toggleable).
 - Headless background mode via CLI (`--background`, `--stop-after`, `--off-on-exit`).
 
-[1.0.0]: https://github.com/u2n4/dualled-pro/releases/tag/v1.0.0
+[1.0.0]: https://github.com/u2n4/ps5-led/releases/tag/v1.0.0

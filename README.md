@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎮 DualLED Pro
+# 🎮 PS5 LED
 
 ### Real-time RGB lightbar control for PS5 DualSense & PS4 DualShock 4 — with a live 3D controller view
 
@@ -10,13 +10,13 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](CONTRIBUTING.md)
 [![Made with Tkinter](https://img.shields.io/badge/UI-Tkinter-FFD43B?logo=python&logoColor=333)](https://docs.python.org/3/library/tkinter.html)
 
-[![GitHub stars](https://img.shields.io/github/stars/u2n4/dualled-pro?style=social)](https://github.com/u2n4/dualled-pro/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/u2n4/ps5-led?style=social)](https://github.com/u2n4/ps5-led/stargazers)
 
 **Pick any color, run a lighting effect, watch your battery — and see it mirrored on a 3D model of your actual controller, in real time.**
 
 🇬🇧 English · 🇸🇦 [بالعربي](#-بالعربي)
 
-![DualLED Pro — PS5 DualSense with an animated RGB lightbar](assets/hero.png)
+![PS5 LED — PS5 DualSense with an animated RGB lightbar](assets/hero.png)
 
 </div>
 
@@ -27,7 +27,7 @@
 **Don't have Python? No problem.** Open **PowerShell** and paste this **one line** — it installs Python (if you don't have it), downloads the app, installs everything, and opens it automatically:
 
 ```powershell
-irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 ```
 
 <details>
@@ -61,7 +61,7 @@ To run it again later, just paste the same line — or use the shortcut printed 
 - 🎛️ **Headless / background mode** — drive the lightbar with no window via the CLI.
 - 🧩 **Single file, zero build step** — one `dualled_pro.py`, pure Python + Tkinter.
 
-> **Scope, honestly:** DualLED Pro is focused on **lighting, battery, and presets**. It is *not* a music-reactive / macro / scheduling suite — it does one thing and does it cleanly.
+> **Scope, honestly:** PS5 LED is focused on **lighting, battery, and presets**. It is *not* a music-reactive / macro / scheduling suite — it does one thing and does it cleanly.
 
 ---
 
@@ -81,7 +81,7 @@ To run it again later, just paste the same line — or use the shortcut printed 
 
 ```bash
 # 1. Clone
-git clone https://github.com/u2n4/dualled-pro.git
+git clone https://github.com/u2n4/ps5-led.git
 cd dualled-pro
 
 # 2. (recommended) virtual env
@@ -143,7 +143,7 @@ Config and logs live in your OS app-data folder (`%APPDATA%\DualLED_Pro` on Wind
 
 ```
 ┌─────────────┐   HID    ┌───────────────┐   color/effect   ┌──────────────┐
-│  Controller │ ───────► │  DualLED Pro  │ ───────────────► │  Lightbar    │
+│  Controller │ ───────► │  PS5 LED  │ ───────────────► │  Lightbar    │
 │ PS5 / PS4   │ ◄─────── │  engine + UI  │                  │  (real RGB)  │
 └─────────────┘  battery └───────┬───────┘                  └──────────────┘
                                  │ mirror
@@ -175,7 +175,7 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 
 ## 🇸🇦 بالعربي
 
-# 🎮 DualLED Pro
+# 🎮 PS5 LED
 
 ### تحكّم لحظي بإضاءة يد PS5 (DualSense) و PS4 (DualShock 4) — مع عرض ثلاثي الأبعاد حي لليد
 
@@ -194,7 +194,7 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 - 🎛️ **وضع خلفي بدون واجهة** عبر سطر الأوامر.
 - 🧩 **ملف واحد، بدون أي بناء** — `dualled_pro.py` فقط، بايثون + Tkinter.
 
-> **بصراحة، نطاق البرنامج:** DualLED Pro مركّز على **الإضاءة، البطارية، والإعدادات المحفوظة**. مو برنامج تفاعل مع الموسيقى ولا ماكروهات ولا جدولة — يسوّي شي واحد ويسوّيه نظيف.
+> **بصراحة، نطاق البرنامج:** PS5 LED مركّز على **الإضاءة، البطارية، والإعدادات المحفوظة**. مو برنامج تفاعل مع الموسيقى ولا ماكروهات ولا جدولة — يسوّي شي واحد ويسوّيه نظيف.
 
 ---
 
@@ -213,7 +213,7 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 **ما عندك بايثون؟ عادي.** افتح **PowerShell** والصق هذا **السطر الواحد** — يثبّت بايثون لو ما هو موجود، يحمّل البرنامج، يركّب كل شي، ويفتح البرنامج تلقائياً:
 
 ```powershell
-irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 ```
 
 **كيف تفتح PowerShell؟**
@@ -232,7 +232,7 @@ irm https://raw.githubusercontent.com/u2n4/dualled-pro/main/install.ps1 | iex
 
 ```bash
 # 1. انسخ المستودع
-git clone https://github.com/u2n4/dualled-pro.git
+git clone https://github.com/u2n4/ps5-led.git
 cd dualled-pro
 
 # 2. (يُفضّل) بيئة افتراضية
@@ -289,7 +289,7 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 
 ```
 ┌─────────────┐   HID    ┌───────────────┐   لون/تأثير      ┌──────────────┐
-│   اليد       │ ───────► │  DualLED Pro  │ ───────────────► │  الإضاءة      │
+│   اليد       │ ───────► │  PS5 LED  │ ───────────────► │  الإضاءة      │
 │  PS5 / PS4  │ ◄─────── │  محرّك + واجهة  │                  │  (RGB فعلي)  │
 └─────────────┘  بطارية   └───────┬───────┘                  └──────────────┘
                                  │ انعكاس
