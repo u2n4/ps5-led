@@ -2,9 +2,6 @@
 # Python 3.8+. The UI uses Tkinter, which ships with most Python installs
 # (on Debian/Ubuntu: `sudo apt install python3-tk`).
 
-# Battery & process info
-psutil>=5.7.0
-
 # PS4 / generic HID controller access (DualShock 4)
 hidapi>=0.12.0
 

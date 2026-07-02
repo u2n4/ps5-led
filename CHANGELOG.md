@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-02
+
+### Added
+- **System-tray icon** (pure Win32, zero extra dependencies): left-click opens the app;
+  right-click shows a quick menu — your profiles (one click to apply), lightbar off, and quit.
+- **Embedded live color picker**: the HSV picker now lives inside the main window next to
+  the sliders — no popup, color applies to the controller while you drag.
+
+### Changed
+- Smaller portable EXE (14.9 → 12.8 MB): unused standard-library modules excluded.
+- Dropped the unused `psutil` dependency (battery reading comes from the controller itself).
+
+[2.1.0]: https://github.com/u2n4/dualled-pro/releases/tag/v2.1.0
+
 ## [2.0.0] - 2026-07-02
 
 ### Added

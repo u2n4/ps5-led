@@ -101,7 +101,7 @@ python dualled_pro.py
 **Minimal install** (just enough to run):
 
 ```bash
-pip install -U pydualsense hidapi psutil
+pip install -U pydualsense hidapi
 python dualled_pro.py
 ```
 
@@ -167,7 +167,7 @@ PRs and issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Good firs
 
 ## 🙏 Acknowledgements
 
-Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https://github.com/trezor/cython-hidapi), and [`psutil`](https://github.com/giampaolo/psutil). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
+Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https://github.com/trezor/cython-hidapi). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
 
 ---
 
@@ -249,7 +249,7 @@ python dualled_pro.py
 **تثبيت سريع** (أقل شي يكفي للتشغيل):
 
 ```bash
-pip install -U pydualsense hidapi psutil
+pip install -U pydualsense hidapi
 python dualled_pro.py
 ```
 
@@ -313,6 +313,6 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 
 ### 🙏 شكر
 
-مبني على [`pydualsense`](https://github.com/flok/pydualsense) و [`hidapi`](https://github.com/trezor/cython-hidapi) و [`psutil`](https://github.com/giampaolo/psutil). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
+مبني على [`pydualsense`](https://github.com/flok/pydualsense) و [`hidapi`](https://github.com/trezor/cython-hidapi). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
 
 </div>

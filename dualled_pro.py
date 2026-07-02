@@ -7,14 +7,14 @@ DualLED Pro — v8 DualSense SVG Edition
 - كشف تلقائي لنوع اليد (PS5/PS4) وعرض النموذج الصحيح
 - كل المزايا السابقة محفوظة: ملفات تعريف، خمول تلقائي، تأثيرات، إلخ
 التشغيل (ويندوز):
-    pip install -U pydualsense hidapi psutil
+    pip install -U pydualsense hidapi
     python "V9 - Copy.py"
 """
 
-import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, hashlib
+import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, hashlib, queue
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, colorchooser, messagebox
+from tkinter import ttk, messagebox
 
 # --------------------------- Paths / Config ---------------------------
 APP_NAME = "DualLED_Pro"
@@ -1359,6 +1359,141 @@ def display_to_code(lang, disp):
     opts = MODE_DISPLAY.get(lang, MODE_DISPLAY["en"])
     return MODE_CODE[opts.index(disp)] if disp in opts else "Manual"
 
+
+# --------------------------- Tray icon (Win32, stdlib only) ---------------------------
+class TrayIcon:
+    """أيقونة بجانب الساعة عبر Shell_NotifyIcon مباشرة — بدون أي مكتبات إضافية.
+    كليك يسار = فتح البرنامج. كليك يمين = قائمة: بروفايلات + إطفاء + خروج.
+    on_action(key) يُستدعى من خيط الأيقونة — لا يلمس Tk، فقط يضع بالطابور."""
+    WM_TRAY = 0x8001  # WM_APP + 1
+
+    def __init__(self, tooltip, icon_path, menu_provider, on_action):
+        self._tip = tooltip
+        self._icon_path = icon_path
+        self._menu_provider = menu_provider   # callable -> [(key, label) | ("sep", None)]
+        self._on_action = on_action
+        self._hwnd = None
+        self._ids = {}
+        self._alive = False
+        if platform.system() != "Windows":
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def destroy(self):
+        try:
+            if self._hwnd:
+                import ctypes
+                ctypes.windll.user32.PostMessageW(self._hwnd, 0x0010, 0, 0)  # WM_CLOSE
+        except Exception:
+            pass
+
+    def _run(self):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u32 = ctypes.windll.user32
+            sh = ctypes.windll.shell32
+            k32 = ctypes.windll.kernel32
+
+            class NID(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                            ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
+                            ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
+                            ("szTip", wintypes.WCHAR * 128), ("dwState", wintypes.DWORD),
+                            ("dwStateMask", wintypes.DWORD), ("szInfo", wintypes.WCHAR * 256),
+                            ("uVersion", wintypes.UINT), ("szInfoTitle", wintypes.WCHAR * 64),
+                            ("dwInfoFlags", wintypes.DWORD)]
+
+            WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                                         wintypes.WPARAM, wintypes.LPARAM)
+
+            def wnd_proc(hwnd, msg, wparam, lparam):
+                if msg == TrayIcon.WM_TRAY:
+                    if lparam == 0x0202:      # WM_LBUTTONUP
+                        self._on_action("open")
+                    elif lparam == 0x0205:    # WM_RBUTTONUP
+                        self._popup(u32, hwnd)
+                    return 0
+                if msg == 0x0002:             # WM_DESTROY
+                    try:
+                        nid = NID(); nid.cbSize = ctypes.sizeof(NID)
+                        nid.hWnd = hwnd; nid.uID = 1
+                        sh.Shell_NotifyIconW(2, ctypes.byref(nid))  # NIM_DELETE
+                    except Exception:
+                        pass
+                    u32.PostQuitMessage(0)
+                    return 0
+                return u32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            self._proc = WNDPROC(wnd_proc)    # مرجع حي — وإلا يجمعه GC وينهار
+            hinst = k32.GetModuleHandleW(None)
+
+            class WNDCLASS(ctypes.Structure):
+                _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROC),
+                            ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                            ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                            ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HBRUSH),
+                            ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+
+            wc = WNDCLASS()
+            wc.lpfnWndProc = self._proc
+            wc.hInstance = hinst
+            wc.lpszClassName = "DualLEDTray"
+            u32.RegisterClassW(ctypes.byref(wc))
+            self._hwnd = u32.CreateWindowExW(0, "DualLEDTray", None, 0, 0, 0, 0, 0,
+                                             None, None, hinst, None)
+
+            hicon = None
+            try:
+                if self._icon_path and os.path.exists(self._icon_path):
+                    hicon = u32.LoadImageW(None, self._icon_path, 1, 0, 0, 0x0010 | 0x0040)
+            except Exception:
+                hicon = None
+            if not hicon:
+                hicon = u32.LoadIconW(None, 32512)  # IDI_APPLICATION
+
+            nid = NID(); nid.cbSize = ctypes.sizeof(NID)
+            nid.hWnd = self._hwnd; nid.uID = 1
+            nid.uFlags = 0x1 | 0x2 | 0x4      # NIF_MESSAGE | NIF_ICON | NIF_TIP
+            nid.uCallbackMessage = TrayIcon.WM_TRAY
+            nid.hIcon = hicon
+            nid.szTip = self._tip[:127]
+            sh.Shell_NotifyIconW(0, ctypes.byref(nid))  # NIM_ADD
+            self._alive = True
+
+            msg = wintypes.MSG()
+            while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                u32.TranslateMessage(ctypes.byref(msg))
+                u32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as e:
+            log("tray err:", e)
+
+    def _popup(self, u32, hwnd):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            menu = u32.CreatePopupMenu()
+            self._ids = {}
+            next_id = 1000
+            for key, label in self._menu_provider():
+                if key == "sep":
+                    u32.AppendMenuW(menu, 0x800, 0, None)          # MF_SEPARATOR
+                else:
+                    self._ids[next_id] = key
+                    u32.AppendMenuW(menu, 0x0, next_id, label)     # MF_STRING
+                    next_id += 1
+            pt = wintypes.POINT()
+            u32.GetCursorPos(ctypes.byref(pt))
+            u32.SetForegroundWindow(hwnd)
+            cmd = u32.TrackPopupMenu(menu, 0x0100 | 0x0002, pt.x, pt.y, 0, hwnd, None)
+            u32.DestroyMenu(menu)
+            if cmd and cmd in self._ids:
+                self._on_action(self._ids[cmd])
+        except Exception as e:
+            log("tray menu err:", e)
+
+
 # --------------------------- UI ---------------------------
 class App(tk.Tk):
     def __init__(self):
@@ -1542,6 +1677,10 @@ class App(tk.Tk):
         self.rb   = _mk_slider(2, "rainbow_brightness",0.2, 1.0, 0.05, float(CFG.get("rainbow_brightness",0.9)))
         self.duty = _mk_slider(3, "flash_duty",        0.1, 0.9, 0.05, float(CFG.get("flash_duty",0.5)))
 
+        # ===== المنتقي الحي مدمج بجانب المنزلقات — لا نوافذ منبثقة =====
+        self._build_live_picker(grid).grid(row=0, column=3, rowspan=4,
+                                           sticky="ne", padx=(36, 0), pady=(0, 4))
+
         # ===== تبديل نموذج اليد =====
         ctrl_row = ttk.Frame(self.card, style="Card.TFrame"); ctrl_row.pack(fill="x", padx=20, pady=(4,4))
         ttk.Label(ctrl_row, text=self.s["ctrl_type"], style="Card.TLabel").pack(side="left", padx=(0,8))
@@ -1642,6 +1781,25 @@ class App(tk.Tk):
         # رسم يد التحكم 3D بعد ظهور النافذة
         self.after(100, lambda: self.ctrl3d.redraw() if hasattr(self, 'ctrl3d') else None)
 
+        # ===== أيقونة شريط النظام (تحت يمين): بروفايلات سريعة + إطفاء + خروج =====
+        self._tray_q = queue.Queue()
+        def _tray_menu():
+            ar = self.lang == "ar"
+            items = [("open", "فتح البرنامج" if ar else "Open"), ("sep", None)]
+            for name in list(CFG.get("profiles", {}).keys())[:8]:
+                items.append(("profile:" + name, ("🎮 " + name)))
+            items += [("sep", None),
+                      ("off", "إطفاء الإضاءة" if ar else "Lightbar off"),
+                      ("quit", "خروج" if ar else "Quit")]
+            return items
+        _ico = None
+        try:
+            _here = Path(__file__).resolve().parent
+            for _p in (_here / "app.ico", _here / "assets" / "app.ico"):
+                if _p.exists(): _ico = str(_p); break
+        except Exception: pass
+        self.tray = TrayIcon("DualLED Pro", _ico, _tray_menu, self._tray_q.put)
+
         # ابدأ الاتصال
         self.after(50, self.post_init)
 
@@ -1684,9 +1842,37 @@ class App(tk.Tk):
         except Exception as e:
             log("post_init err:", e)
 
+    def _handle_tray_action(self, key):
+        try:
+            if key == "open":
+                self.deiconify(); self.lift(); self.focus_force()
+                self.minimized_to_tray = False
+            elif key == "off":
+                if self.engine:
+                    self.engine.set_mode("Manual")
+                    self.engine.set_color((0, 0, 0))
+                self.mode_disp.set(code_to_display(self.lang, "Manual"))
+                self.preview.configure(bg="#000000")
+            elif key == "quit":
+                self.quit_app()
+            elif key.startswith("profile:"):
+                name = key.split(":", 1)[1]
+                if name in CFG.get("profiles", {}):
+                    self.prof_var.set(name)
+                    self.load_profile(name)
+                    if self.engine:
+                        self.mode_disp.set(code_to_display(self.lang, self.engine.mode))
+        except Exception as e:
+            log("tray action err:", e)
+
     def sync_preview_tick(self):
         hidden = False
         try:
+            try:
+                while True:
+                    self._handle_tray_action(self._tray_q.get_nowait())
+            except queue.Empty:
+                pass
             # النافذة مخفية (خلفية/tray/مصغّرة)؟ لا رسم إطلاقًا — المحرك يواصل قيادة
             # الإضاءة الفعلية في خيطه الخاص، والواجهة تنام (صفر استهلاك أثناء اللعب).
             hidden = self.state() in ("withdrawn", "iconic")
@@ -1724,38 +1910,39 @@ class App(tk.Tk):
         if hasattr(self, 'ctrl3d'): self.ctrl3d.set_led_color(*rgb)
 
     def pick_color(self, e=None):
-        """منتقي ألوان حي مدمج — كل حركة فيه تُطبَّق على اليد فورًا بدون زر OK."""
-        self._open_live_picker()
+        """المنتقي مدمج في النافذة — النقر يومض إطاره للفت النظر إليه."""
+        self._flash_picker()
 
-    def _open_live_picker(self):
-        if getattr(self, "_picker_win", None) is not None:
+    def _flash_picker(self, n=4):
+        f = getattr(self, "_picker_frame", None)
+        if not f: return
+        def step(i):
             try:
-                if self._picker_win.winfo_exists():
-                    self._picker_win.lift(); return
+                f.configure(highlightbackground="#3b82f6" if i % 2 == 0 else "#2a3547")
+                if i < n: self.after(160, lambda: step(i + 1))
             except Exception: pass
-        orig = self.preview.cget("bg")
-        ar = self.lang == "ar"
-        win = tk.Toplevel(self); self._picker_win = win
-        win.title("اختيار لون — مباشر" if ar else "Pick color — live")
-        win.configure(bg="#131923"); win.resizable(False, False)
-        win.attributes("-topmost", True)
-        try: win.transient(self)
-        except Exception: pass
+        step(0)
 
+    def _build_live_picker(self, parent):
+        """لوحة ألوان حية داخل الواجهة — أي حركة تُطبَّق على اليد فورًا (بدون OK)."""
+        CARD = "#131923"
+        frame = tk.Frame(parent, bg=CARD, highlightthickness=1, highlightbackground="#2a3547")
+        self._picker_frame = frame
+
+        orig = CFG.get("color", "#00aaff")
         r0, g0, b0 = hex_to_rgb(orig)
         h0, s0, v0 = colorsys.rgb_to_hsv(r0 / 255, g0 / 255, b0 / 255)
         st = {"h": h0, "s": s0, "v": v0}
-        GW, GH, Z = 72, 52, 4                      # شبكة التدرج × التكبير = 288×208
-        SVW, SVH, HW = GW * Z, GH * Z, 30
+        GW, GH, Z = 60, 44, 4                    # شبكة التدرج × التكبير = 240×176
+        SVW, SVH, HW = GW * Z, GH * Z, 26
 
-        sv = tk.Canvas(win, width=SVW, height=SVH, bg="#000000", bd=0,
+        sv = tk.Canvas(frame, width=SVW, height=SVH, bg="#000000", bd=0,
                        highlightthickness=1, highlightbackground="#2a3547", cursor="crosshair")
-        sv.grid(row=0, column=0, padx=(14, 8), pady=(14, 6))
-        hue = tk.Canvas(win, width=HW, height=SVH, bd=0,
+        sv.grid(row=0, column=0, padx=(10, 6), pady=10)
+        hue = tk.Canvas(frame, width=HW, height=SVH, bd=0,
                         highlightthickness=1, highlightbackground="#2a3547", cursor="sb_v_double_arrow")
-        hue.grid(row=0, column=1, padx=(0, 14), pady=(14, 6))
+        hue.grid(row=0, column=1, padx=(0, 10), pady=10)
 
-        # شريط الـ Hue — يُرسم مرة واحدة
         for y in range(SVH):
             r_, g_, b_ = colorsys.hsv_to_rgb(y / max(1, SVH - 1), 1.0, 1.0)
             hue.create_line(0, y, HW, y, fill=f"#{int(r_*255):02x}{int(g_*255):02x}{int(b_*255):02x}")
@@ -1772,7 +1959,7 @@ class App(tk.Tk):
                     for x in range(GW)) + "}"
                 base.put(row, to=(0, y))
             big = base.zoom(Z, Z)
-            holder["img"] = big                    # مرجع حي وإلا يمسحه جامع القمامة
+            holder["img"] = big                   # مرجع حي وإلا يمسحه جامع القمامة
             sv.delete("grad")
             sv.create_image(0, 0, anchor="nw", image=big, tags="grad")
             sv.tag_raise("mark")
@@ -1780,12 +1967,12 @@ class App(tk.Tk):
         sv.create_oval(0, 0, 0, 0, outline="#ffffff", width=2, tags="mark")
 
         cur_hex = tk.StringVar(value=orig)
-        bar = tk.Frame(win, bg="#131923"); bar.grid(row=1, column=0, columnspan=2, sticky="we", padx=14)
-        swatch = tk.Canvas(bar, width=46, height=26, bd=0, highlightthickness=1, highlightbackground="#2a3547")
+        bar = tk.Frame(frame, bg=CARD); bar.grid(row=1, column=0, columnspan=2, sticky="we", padx=10, pady=(0, 10))
+        swatch = tk.Canvas(bar, width=40, height=22, bd=0, highlightthickness=1, highlightbackground="#2a3547")
         swatch.pack(side="left")
-        sw_rect = swatch.create_rectangle(0, 0, 46, 26, fill=orig, outline="")
-        tk.Label(bar, textvariable=cur_hex, bg="#131923", fg="#9fb0c0",
-                 font=("Consolas", 11)).pack(side="left", padx=10)
+        sw_rect = swatch.create_rectangle(0, 0, 40, 22, fill=orig, outline="")
+        tk.Label(bar, textvariable=cur_hex, bg=CARD, fg="#9fb0c0",
+                 font=("Consolas", 10)).pack(side="left", padx=8)
 
         def sync_marks():
             x = st["s"] * (SVW - 1); y = (1.0 - st["v"]) * (SVH - 1)
@@ -1798,7 +1985,7 @@ class App(tk.Tk):
             hx = f"#{r_:02x}{g_:02x}{b_:02x}"
             cur_hex.set(hx)
             swatch.itemconfigure(sw_rect, fill=hx)
-            self.set_color_hex(hx)                 # ← مباشر: المحرك + اليد الفعلية + الرسم
+            self.set_color_hex(hx)                # ← مباشر: المحرك + اليد الفعلية + الرسم
             sync_marks()
 
         def on_sv(ev):
@@ -1813,21 +2000,8 @@ class App(tk.Tk):
         sv.bind("<Button-1>", on_sv); sv.bind("<B1-Motion>", on_sv)
         hue.bind("<Button-1>", on_hue); hue.bind("<B1-Motion>", on_hue)
 
-        btns = tk.Frame(win, bg="#131923"); btns.grid(row=2, column=0, columnspan=2, pady=(8, 14))
-        def close_keep():
-            try: win.destroy()
-            except Exception: pass
-            self._picker_win = None
-        def close_cancel():
-            self.set_color_hex(orig)
-            close_keep()
-        tk.Button(btns, text=("موافق" if ar else "OK"), bd=0, bg="#3b82f6", fg="#0b0f14",
-                  activebackground="#60a5fa", width=10, command=close_keep).pack(side="left", padx=6)
-        tk.Button(btns, text=("إلغاء" if ar else "Cancel"), bd=0, bg="#2a3340", fg="#e6edf3",
-                  activebackground="#3a4658", width=10, command=close_cancel).pack(side="left", padx=6)
-        win.protocol("WM_DELETE_WINDOW", close_keep)
-
         render_sv(); sync_marks()
+        return frame
 
     def toggle_bgr(self):
         CFG["bgr_swap"]=not bool(CFG.get("bgr_swap", False)); save_cfg(CFG)
@@ -2068,6 +2242,10 @@ class App(tk.Tk):
             log("quit: backend close err:", e)
         try:
             release_slot_lock()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "tray", None): self.tray.destroy()
         except Exception:
             pass
         log("App quit by user")
