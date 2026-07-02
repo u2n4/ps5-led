@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-DualLED Pro — v7 3D Controller Edition
+DualLED Pro — v8 DualSense SVG Edition
 =======================================
-- يد تحكم ثلاثية الأبعاد احترافية (PS5 DualSense + PS4 DualShock 4)
-- تتزامن إضاءة اليد 3D مع اللون الحقيقي على اليد الفعلية بنسبة 100%
+- رسم DualSense دقيق من أصل SVG مرخّص، بشريطي إضاءة يحضنان التاتشباد كما في اليد الحقيقية
+- تتزامن إضاءة اليد المعروضة مع اللون الحقيقي على اليد الفعلية بنسبة 100%
 - كشف تلقائي لنوع اليد (PS5/PS4) وعرض النموذج الصحيح
 - كل المزايا السابقة محفوظة: ملفات تعريف، خمول تلقائي، تأثيرات، إلخ
 التشغيل (ويندوز):
@@ -11,7 +11,7 @@ DualLED Pro — v7 3D Controller Edition
     python "V9 - Copy.py"
 """
 
-import os, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, hashlib, hashlib
+import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, hashlib
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
@@ -63,10 +63,12 @@ DEFAULT_CFG = {
     "bgr_swap": False,
     "max_instances": 1,                  # السماح بـ 5 نسخ كحد أقصى
     "minimize_to_tray": True,            # تصغير للشريط السفلي بدلاً من الإغلاق
+    "shell_color": "white",              # طقم ألوان اليد المعروضة
     "profiles": {
-        "Default": {
-            "mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#00aaff"
-        }
+        "Default":  {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#00aaff"},
+        "Fortnite": {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#3b82f6"},
+        "COD":      {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#ff3434"},
+        "FIFA":     {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#22c55e"}
     },
     "auto_sleep": {"enabled": False, "minutes": 30, "action": "off"},  # off / solid
     "bg_starfield": True
@@ -472,7 +474,7 @@ class Engine(threading.Thread):
         self.color_hex=CFG.get("color","#00aaff")
         self.color=hex_to_rgb(self.color_hex)
         self._ol = threading.Lock(); self.out = self.color
-        self._last_apply = time.time()
+        self._last_apply = 0.0   # 0 = أول إرسال يتم فورًا
 
     # ---- profiles helpers
     def snapshot(self):
@@ -514,7 +516,29 @@ class Engine(threading.Thread):
                 m=self.mode; s=self.speed; rb=self.rb; c=self.color; duty=self.duty
 
                 if m=="Manual":
-                    self._send(c); time.sleep(1/30)
+                    # اللون ثابت → أرسل فقط عند التغيّر + نبضة تثبيت كل ثانيتين
+                    # (بدل 30 كتابة HID في الثانية بلا داعٍ — أخف على المعالج واليد)
+                    with self._ol: cur = self.out
+                    if tuple(c) != tuple(cur) or (time.time() - self._last_apply) > 2.0:
+                        self._send(c)
+                    time.sleep(1/30)
+
+                elif m=="Battery":
+                    # لون تلقائي حسب الشحن: أخضر ≥60، برتقالي ≥30، أحمر أقل — ونبض أثناء الشحن
+                    now=time.time()
+                    if now - getattr(self,"_batt_t",0.0) > 5.0:
+                        try: bp,bch = self.b.get_battery()
+                        except Exception: bp,bch = None,False
+                        self._batt_t=now; self._batt_p=bp; self._batt_ch=bch
+                    bp = getattr(self,"_batt_p",None)
+                    if bp is None:  col=(180,180,180)
+                    elif bp>=60:    col=(34,197,94)
+                    elif bp>=30:    col=(245,158,11)
+                    else:           col=(239,68,68)
+                    if getattr(self,"_batt_ch",False):
+                        k=0.55+0.45*(0.5+0.5*math.sin(time.time()*2.2))
+                        col=tuple(int(x*k) for x in col)
+                    self._send(col); time.sleep(0.5)
 
                 elif m=="Sequence":
                     pal=[(255,40,40),(40,200,90),(40,130,255),(160,60,255),(255,255,255),(0,0,0)]
@@ -649,6 +673,9 @@ class Starfield(tk.Canvas):
     def _tick(self):
         if not self.running or not self.winfo_exists(): return
         try:
+            # النافذة مخفية (tray/مصغّرة)؟ لا ترسم شيئًا — صفر استهلاك أثناء اللعب
+            if not self.winfo_viewable():
+                return
             w=self.winfo_width(); h=self.winfo_height()
             if not self.stars:
                 for _ in range(self.count):
@@ -667,16 +694,134 @@ class Starfield(tk.Canvas):
             if self._after is not None: self.after_cancel(self._after)
         except Exception: pass
 
-# --------------------------- 3D Controller Widget ---------------------------
+# --------------------------- DualSense SVG asset (accurate 2D view) ---------------------------
+# يُحمَّل من assets/dualsense-svgrepo.svg (أيقونة line-art مرخّصة من SVG Repo، viewBox 128x128).
+# التحليل: 23 مسارًا، أوامر M/L/C/H/V/Z كبيرة فقط. لو الملف مفقود/تغيّر → نرجع للعرض 3D تلقائيًا.
+
+def _flatten_cubic(p0, c1, c2, p1, steps=12):
+    """تحويل منحنى Bezier تكعيبي إلى نقاط مستقيمة."""
+    pts = []
+    for i in range(1, steps + 1):
+        t = i / steps
+        mt = 1.0 - t
+        a = mt * mt * mt; b = 3 * mt * mt * t; c = 3 * mt * t * t; d = t * t * t
+        pts.append((a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0],
+                    a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1]))
+    return pts
+
+def _parse_svg_path_d(d):
+    """يفكّك خاصية d (أوامر مطلقة M/L/C/H/V/Z فقط) إلى قائمة subpaths من النقاط."""
+    toks = re.findall(r"[A-Za-z]|-?\d*\.?\d+(?:[eE][-+]?\d+)?", d)
+    subs, cur = [], []
+    x = y = 0.0
+    i = 0
+    cmd = None
+    while i < len(toks):
+        t = toks[i]
+        if t.isalpha():
+            if t not in "MLCHVZ":
+                return None            # أمر غير مدعوم (نسبي/قوس) → فشل آمن
+            cmd = t; i += 1
+            if cmd == "Z":
+                if cur: subs.append(cur)
+                cur = []
+            continue
+        if cmd == "M":
+            x, y = float(toks[i]), float(toks[i + 1]); i += 2
+            if cur: subs.append(cur)
+            cur = [(x, y)]
+            cmd = "L"                  # إحداثيات لاحقة بعد M تُعامل كـ L
+        elif cmd == "L":
+            x, y = float(toks[i]), float(toks[i + 1]); i += 2
+            cur.append((x, y))
+        elif cmd == "H":
+            x = float(toks[i]); i += 1
+            cur.append((x, y))
+        elif cmd == "V":
+            y = float(toks[i]); i += 1
+            cur.append((x, y))
+        elif cmd == "C":
+            c1 = (float(toks[i]), float(toks[i + 1]))
+            c2 = (float(toks[i + 2]), float(toks[i + 3]))
+            p1 = (float(toks[i + 4]), float(toks[i + 5])); i += 6
+            cur.extend(_flatten_cubic((x, y), c1, c2, p1))
+            x, y = p1
+        else:
+            return None
+    if cur: subs.append(cur)
+    return subs
+
+# فهرسة مكوّنات الأيقونة (ثابتة لهذا الأصل تحديدًا — تحقّق منها محلّل مسارات مستقل)
+_DS_IDX = {
+    "touch": 0, "body": 1, "btn_tri": 2, "btn_cross": 3, "btn_sq": 4,
+    "well_r": 5, "well_l": 6, "cap_l": 7, "cap_r": 8, "r1": 9, "l1": 10,
+    "wing_r": 11, "wing_l": 12, "btn_circ": 13, "mute": 14,
+    "dp_down": 15, "dp_up": 16, "dp_left": 17, "dp_right": 18,
+    "opts": 19, "create": 20, "grille2": 21, "grille1": 22,
+}
+
+# محور شريط الإضاءة الأيسر — يحضن حافة التاتشباد اليسرى من زاويتها العلوية حتى السفلية
+# ثم يلتف قليلًا للداخل حول الزاوية (مطابق لليد الحقيقية: الضوء لا يتجاوز التاتشباد للأسفل).
+_DS_LB_LEFT = [((43.4, 28.8), (42.0, 31.0), (41.3, 34.0), (41.4, 37.5)),
+               ((41.4, 37.5), (41.9, 41.0), (42.7, 44.5), (43.4, 47.5)),
+               ((43.4, 47.5), (43.9, 49.8), (44.6, 51.7), (45.8, 52.9)),
+               ((45.8, 52.9), (46.4, 53.5), (47.0, 53.8), (47.8, 53.9))]
+
+def _ds_lightbar_polylines():
+    left = []
+    for seg in _DS_LB_LEFT:
+        if not left: left.append(seg[0])
+        left.extend(_flatten_cubic(*seg, steps=8))
+    right = [(128.0 - x, y) for (x, y) in left]
+    return left, right
+
+_DS_SVG = {"tried": False, "geo": None}
+
+def _load_dualsense_svg():
+    """تحميل وتفكيك الأيقونة مرة واحدة. None لو الأصل مفقود أو بنيته غير متوقعة."""
+    if _DS_SVG["tried"]:
+        return _DS_SVG["geo"]
+    _DS_SVG["tried"] = True
+    try:
+        here = Path(__file__).resolve().parent
+        p = here / "assets" / "dualsense-svgrepo.svg"
+        if not p.exists():
+            log("dualsense svg asset missing:", p)
+            return None
+        txt = p.read_text(encoding="utf-8")
+        ds = re.findall(r'\bd="([^"]+)"', txt)
+        paths = [_parse_svg_path_d(d) for d in ds]
+        if len(paths) != 23 or any(sp is None or not sp for sp in paths):
+            log("dualsense svg asset unexpected structure; falling back to 3D")
+            return None
+        lb_l, lb_r = _ds_lightbar_polylines()
+        _DS_SVG["geo"] = {"paths": paths, "lb": (lb_l, lb_r)}
+        log("dualsense svg asset loaded:", len(paths), "paths")
+    except Exception as e:
+        log("dualsense svg parse err:", e)
+        _DS_SVG["geo"] = None
+    return _DS_SVG["geo"]
+
+# ألوان أطقم DualSense الرسمية الشهيرة — تُطبَّق على رسم اليد
+_DS_SHELLS = {
+    "white":  {"shell": (223,226,233), "line": (72,78,92),   "touch": (232,234,239), "dpad": (211,215,224), "bump": (58,62,72),   "btn": (52,56,66),   "glyph": (158,164,176), "inset": (31,34,41)},
+    "black":  {"shell": (45,47,54),    "line": (118,124,136),"touch": (56,58,66),    "dpad": (58,61,70),    "bump": (28,30,36),   "btn": (38,41,49),   "glyph": (172,177,187), "inset": (22,24,29)},
+    "red":    {"shell": (158,34,48),   "line": (232,196,200),"touch": (176,52,66),   "dpad": (146,30,44),   "bump": (72,16,24),   "btn": (84,22,32),   "glyph": (240,214,218), "inset": (34,18,22)},
+    "blue":   {"shell": (70,118,205),  "line": (214,226,246),"touch": (92,138,218),  "dpad": (62,106,188),  "bump": (30,48,86),   "btn": (38,58,100),  "glyph": (222,232,248), "inset": (22,30,48)},
+    "purple": {"shell": (112,92,168),  "line": (226,220,242),"touch": (128,108,184), "dpad": (102,84,156),  "bump": (48,38,76),   "btn": (60,48,94),   "glyph": (230,224,244), "inset": (30,26,46)},
+}
+
+# --------------------------- Controller Widget ---------------------------
 class Controller3D(tk.Canvas):
     """
-    رسم يد تحكم احترافية عامة (generic gamepad) مع شريط LED يتغيّر شكل توهّجه حسب الوضع.
-    لون الشريط يتزامن مع اللون الفعلي على اليد بنسبة 100%، وكل وضع له توقيع توهّج مختلف.
+    عرض يد التحكم متزامنًا مع اللون الفعلي 100%:
+      • PS5: رسم DualSense دقيق من أصل SVG المرخّص، بشريطي إضاءة يحضنان التاتشباد.
+      • PS4: الرسم العام السابق (شريطه العلوي يطابق مكان lightbar الحقيقي في DS4).
     """
     def __init__(self, master, controller_type="ps5", width=680, height=260, **kw):
         bg = kw.pop("bg", "#0b0f14")
         super().__init__(master, width=width, height=height, bg=bg, highlightthickness=0, bd=0, **kw)
-        self.ctrl_type = controller_type  # "ps5" or "ps4" — cosmetic roundness only
+        self.ctrl_type = controller_type  # "ps5" or "ps4"
         self._led_color = (0, 170, 255)   # RGB tuple — synced with engine output
         self._glow_layers = 8             # عدد طبقات التوهج
         self._width = width
@@ -685,20 +830,32 @@ class Controller3D(tk.Canvas):
         self._draw_id = None
         self._mode = "Manual"             # active lighting mode (drives glow signature)
         self._anim = 0                    # free-running phase, advanced once per redraw
+        self.on_click = None              # يضبطه App: نقرة = منتقي الألوان
+        self._shell = "white"             # طقم ألوان اليد (أبيض/أسود/أحمر/أزرق/بنفسجي)
+        self.configure(cursor="hand2")
         self.bind("<Configure>", self._on_resize)
+        self.bind("<Button-1>", self._on_click)
 
     def _on_resize(self, event=None):
         self._width = self.winfo_width()
         self._height = self.winfo_height()
         self.redraw()
 
+    def _on_click(self, ev):
+        if callable(self.on_click):
+            self.on_click(ev)
+
     def set_led_color(self, r, g, b):
-        """تحديث لون LED — يُستدعى كل 33ms من sync loop. يعيد الرسم دائمًا."""
-        self._led_color = (int(r), int(g), int(b))
+        """تحديث لون LED — يُستدعى كل 33ms من sync loop."""
+        rgb = (int(r), int(g), int(b))
+        # لون ثابت + وضع بلا توقيع متحرك → لا داعي لإعادة الرسم (توفير CPU)
+        if rgb == self._led_color and self._mode not in ("Rainbow", "Wave", "Sequence"):
+            return
+        self._led_color = rgb
         self.redraw()
 
     def set_controller_type(self, ctype):
-        """تبديل ps5/ps4 — يؤثر فقط على استدارة الجسم (تجميلي، بدون أي شكل سوني)"""
+        """تبديل ps5/ps4 — PS5 = رسم DualSense الدقيق، PS4 = الرسم العام بشريط علوي."""
         if ctype != self.ctrl_type:
             self.ctrl_type = ctype
             self.redraw()
@@ -707,6 +864,12 @@ class Controller3D(tk.Canvas):
         """تحديث وضع الإضاءة — يغيّر شكل/توقيع توهّج الشريط حسب الوضع المختار"""
         self._mode = code or "Manual"
         self.redraw()
+
+    def set_shell(self, key):
+        """تبديل طقم ألوان اليد المعروضة (أطقم DualSense الرسمية)."""
+        if key in _DS_SHELLS and key != self._shell:
+            self._shell = key
+            self.redraw()
 
     def _blend(self, c1, c2, t):
         """خلط لونين بنسبة t (0=c1, 1=c2)"""
@@ -725,13 +888,184 @@ class Controller3D(tk.Canvas):
         return (11, 15, 20)
 
     def redraw(self):
-        """يمسح ويعيد رسم: الجسم + عناصر التحكم + شريط LED حسب الوضع."""
+        """يمسح ويعيد الرسم حسب نوع اليد."""
         self._anim = (self._anim + 1) % 360   # phase advances once per frame
         self.delete("all")
         bg = self._parse_bg()
-        self._draw_body(bg)
-        self._draw_controls(bg)
-        self._draw_led_strip(self._led_color, bg)
+        geo = _load_dualsense_svg() if self.ctrl_type == "ps5" else None
+        if geo is not None:
+            self._draw_ps5_svg(geo, bg)
+        else:
+            # PS4 — أو فشل تحميل أصل SVG → الرسم العام كخطة بديلة
+            self._draw_body(bg)
+            self._draw_controls(bg)
+            self._draw_led_strip(self._led_color, bg)
+
+    # ==================== نظرة SVG الدقيقة (PS5) ====================
+    def _svg_tx(self):
+        """معامل التحويل من فضاء الأيقونة 128 إلى فضاء الكانفس: (scale, ox, oy)."""
+        W, H = max(1, self._width), max(1, self._height)
+        s = min(W * 0.86 / 113.0, H * 0.86 / 75.0)
+        return s, W / 2.0 - 64.0 * s, H / 2.0 - 64.0 * s
+
+    def _poly(self, pts, s, ox, oy):
+        out = []
+        for (x, y) in pts:
+            out.append(ox + x * s); out.append(oy + y * s)
+        return out
+
+    def _draw_ps5_svg(self, geo, bg):
+        led = self._led_color
+        s, ox, oy = self._svg_tx()
+        P = geo["paths"]; I = _DS_IDX
+        lw = max(1, round(s * 0.5))                     # سماكة خطوط الأيقونة
+        pal = _DS_SHELLS.get(self._shell, _DS_SHELLS["white"])
+        LINE = self._hex(pal["line"])
+        SHELL = pal["shell"]
+        body = P[I["body"]][0]
+
+        # ملاحظة: مسار الجسم يعبر جسرًا مزدوجًا في المنتصف → قاعدة even-odd تُفرغ المقبضين،
+        # لذا نكمل التعبئة بمخططي الجناحين (wing_l/wing_r) اللذين يغطيان المقبضين بالكامل.
+        wing_l = P[I["wing_l"]][0]; wing_r = P[I["wing_r"]][0]
+        # (1) ظل خفيف تحت الجسم
+        SHC = self._hex(self._blend(bg, (0, 0, 0), 0.5))
+        for part in (body, wing_l, wing_r):
+            sh = self._poly([(x + 1.6, y + 2.2) for (x, y) in part], s, ox, oy)
+            self.create_polygon(sh, fill=SHC, outline="")
+        # (2) الهيكل الأبيض (سيلويت الجسم + الجناحان/المقبضان)
+        for part in (body, wing_l, wing_r):
+            self.create_polygon(self._poly(part, s, ox, oy), fill=self._hex(SHELL), outline="")
+        # (3) القسم الداكن الأوسط حول العصوين (سمة DualSense المميزة)
+        self._ps5_center_inset(s, ox, oy, pal["inset"])
+        # (4) سطح التاتشباد — أبيض مع غسلة خفيفة من لون LED
+        touch = P[I["touch"]][0]
+        self.create_polygon(self._poly(touch, s, ox, oy),
+                            fill=self._hex(self._blend(pal["touch"], led, 0.08)), outline="")
+        # (5) شريطا الإضاءة يحضنان حافتي التاتشباد + خط الانتشار على حافته السفلية (البطل)
+        lb_l, lb_r = geo["lb"]
+        th = max(3, round(s * 1.2))
+        self._draw_lightbar_strip(self._poly(lb_l, s, ox, oy), led, bg, th, 0)
+        self._draw_lightbar_strip(self._poly(lb_r, s, ox, oy), led, bg, th, 1)
+        # خط انتشار الضوء أسفل التاتشباد (يظهر أبيض متوهّج بلمسة من لون LED كما في العتاد)
+        dy0 = oy + 54.15 * s
+        dx0, dx1 = ox + 48.6 * s, ox + 79.4 * s
+        self.create_line(dx0, dy0, dx1, dy0, fill=self._hex(self._blend(SHELL, led, 0.35)),
+                         width=max(2, round(s * 0.7)), capstyle=tk.ROUND)
+        self.create_line(dx0, dy0, dx1, dy0, fill=self._hex(self._blend(led, (255, 255, 255), 0.72)),
+                         width=max(1, round(s * 0.3)), capstyle=tk.ROUND)
+        # (6) خطوط الأيقونة (الحدود الأصلية من الأصل المرخّص)
+        for key in ("body", "wing_l", "wing_r", "touch"):
+            self.create_line(self._poly(P[I[key]][0] + P[I[key]][0][:1], s, ox, oy),
+                             fill=LINE, width=lw, joinstyle=tk.ROUND)
+        # (7) أكتاف L1/R1 — بلاستيك داكن أعلى الحافة
+        for key in ("l1", "r1"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex(pal["bump"]), outline=LINE, width=1)
+        # (8) أذرع D-Pad — فاتحة فوق الجناح الأبيض
+        for key in ("dp_up", "dp_down", "dp_left", "dp_right"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex(pal["dpad"]), outline=LINE, width=1)
+        # (9) بئرا العصوين + الغطاءان — أسود مطفي كما في اليد الحقيقية
+        for key in ("well_l", "well_r"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex((24, 26, 31)), outline=self._hex((60, 64, 76)), width=1)
+        for key in ("cap_l", "cap_r"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex((17, 19, 23)), outline=self._hex((74, 80, 92)), width=1)
+        # (10) الأزرار الأربعة — أغطية داكنة شفافة برموز رمادية أحادية (سمة DualSense)
+        for key in ("btn_tri", "btn_circ", "btn_cross", "btn_sq"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex(pal["btn"]), outline=LINE, width=1)
+        self._ps5_button_glyphs(s, ox, oy, pal["glyph"])
+        # (11) أزرار Create/Options + زر كتم المايك
+        for key in ("create", "opts"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex((70, 75, 86)), outline="")
+        self.create_polygon(self._poly(P[I["mute"]][0], s, ox, oy),
+                            fill=self._hex((30, 33, 40)), outline=LINE, width=1)
+        # (12) مؤشرات اللاعب — 5 نقاط بيضاء أسفل التاتشباد (بيضاء في العتاد الحقيقي)
+        for k in (-2, -1, 0, 1, 2):
+            cxp = ox + (64.0 + k * 2.2) * s
+            cyp = oy + 56.0 * s
+            r = max(1.2, 0.5 * s)
+            bright = 0.62 if k == 0 else 0.38
+            self.create_oval(cxp - r, cyp - r, cxp + r, cyp + r,
+                             fill=self._hex(self._blend(bg, (255, 255, 255), bright)), outline="")
+        # (13) فتحات المايك السفلية من الأيقونة
+        for key in ("grille1", "grille2"):
+            self.create_polygon(self._poly(P[I[key]][0], s, ox, oy),
+                                fill=self._hex((96, 102, 114)), outline="")
+
+    def _ps5_center_inset(self, s, ox, oy, inset_rgb=(31, 34, 41)):
+        """كبسولة داكنة بين العصوين — القسم الأسود في وجه DualSense.
+        حدّها السفلي يبقى فوق خط الالتحام (y≈75) كي لا يندمج مع الفراغ بين المقبضين."""
+        pts = []
+        cl, cr, cy0, rr = 46.5, 81.5, 64.9, 9.0
+        for i in range(13):                              # قوس يسار (أعلى→أسفل)
+            a = math.pi / 2 + math.pi * (i / 12)
+            pts.append((cl + rr * math.cos(a), cy0 - rr * math.sin(a)))
+        pts += [(56.5, 72.6), (60.0, 74.3), (64.0, 74.8), (68.0, 74.3), (71.5, 72.6)]
+        for i in range(13):                              # قوس يمين (أسفل→أعلى)
+            a = -math.pi / 2 + math.pi * (i / 12)
+            pts.append((cr + rr * math.cos(a), cy0 - rr * math.sin(a)))
+        self.create_polygon(self._poly(pts, s, ox, oy),
+                            fill=self._hex(inset_rgb), outline="", smooth=True)
+
+    def _ps5_button_glyphs(self, s, ox, oy, glyph_rgb=(158, 164, 176)):
+        """رموز △ ○ ✕ □ أحادية اللون (DualSense بلا ألوان رموز)."""
+        g = self._hex(glyph_rgb)
+        w = max(1, round(s * 0.38))
+        def T(x, y): return (ox + x * s, oy + y * s)
+        # △ at (99, 39.96)
+        p1 = T(99, 38.35); p2 = T(100.65, 41.25); p3 = T(97.35, 41.25)
+        self.create_line(*p1, *p2, *p3, *p1, fill=g, width=w, joinstyle=tk.ROUND)
+        # ○ at (107, 47.96)
+        a0 = T(107 - 1.55, 47.96 - 1.55); a1 = T(107 + 1.55, 47.96 + 1.55)
+        self.create_oval(*a0, *a1, outline=g, width=w)
+        # ✕ at (99, 55.96)
+        self.create_line(*T(97.65, 54.6), *T(100.35, 57.3), fill=g, width=w, capstyle=tk.ROUND)
+        self.create_line(*T(100.35, 54.6), *T(97.65, 57.3), fill=g, width=w, capstyle=tk.ROUND)
+        # □ at (91, 47.96)
+        b0 = T(91 - 1.4, 47.96 - 1.4); b1 = T(91 + 1.4, 47.96 + 1.4)
+        self.create_rectangle(*b0, *b1, outline=g, width=w)
+
+    def _draw_lightbar_strip(self, flat, led, bg, th, side):
+        """شريط إضاءة واحد (polyline مسطّح) بتوهّج طبقي وتوقيع حسب الوضع."""
+        mode = self._mode
+        phase = self._anim
+        white = (255, 255, 255)
+        n = len(flat) // 2 - 1
+        # توهّج خارجي مضبوط — طبقات قليلة قريبة من الشريط (بدون زيادة)
+        for i in range(3, 0, -1):
+            self.create_line(*flat, fill=self._hex(self._blend(bg, led, 0.07 + 0.06 * (3 - i))),
+                             width=th + i * max(2, th // 2) * 2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+
+        def seg_color(k):
+            if mode == "Rainbow":
+                h = (phase / 360.0 + k / max(1, n) * 0.5 + side * 0.5) % 1.0
+                r_, g_, b_ = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+                return (int(r_ * 255), int(g_ * 255), int(b_ * 255))
+            if mode == "Wave":
+                br = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(phase * 0.15 - k * 0.55))
+                return self._blend(bg, led, br)
+            if mode == "Sequence":
+                comet = (phase // 5) % max(1, n)
+                d = abs(k - comet)
+                return self._blend(led, white, 0.55) if d == 0 else self._blend(bg, led, max(0.15, 1.0 - d * 0.3))
+            if mode == "Random":
+                tbl = (0.4, 0.7, 1.0)
+                return self._blend(bg, led, tbl[((k * 73 + 29 + side * 41) % 100) % 3])
+            return None
+
+        if mode in ("Rainbow", "Wave", "Sequence", "Random"):
+            for k in range(n):
+                self.create_line(flat[k * 2], flat[k * 2 + 1], flat[k * 2 + 2], flat[k * 2 + 3],
+                                 fill=self._hex(seg_color(k)), width=th, capstyle=tk.ROUND)
+        else:
+            self.create_line(*flat, fill=self._hex(led), width=th,
+                             capstyle=tk.ROUND, joinstyle=tk.ROUND)
+            self.create_line(*flat, fill=self._hex(self._blend(led, white, 0.5)),
+                             width=max(1, th // 3), capstyle=tk.ROUND, joinstyle=tk.ROUND)
 
     # ==================== Generic body ====================
     def _body_metrics(self):
@@ -988,7 +1322,8 @@ STR = {
    "status_manual":"الحالة: يدوي","status_sequence":"الحالة: تتابع (فاصل {v:.1f}s)",
    "status_random":"الحالة: عشوائي (فاصل {v:.1f}s)","status_rainbow":"الحالة: قوس قزح (دورة {v:.1f}s، سطوع {b:.2f})",
    "status_pulse":"الحالة: نبض (فترة {v:.1f}s)","status_breath":"الحالة: تنفس","status_wave":"الحالة: موجة",
-   "status_grad":"الحالة: تدرّج",
+   "status_grad":"الحالة: تدرّج","status_batt":"الحالة: لون حسب البطارية",
+   "shell_color":"لون اليد",
    "ctrl_not_found":"لم يتم العثور على يد التحكم.",
    "ctrl_type":"نموذج اليد","ctrl_ps5":"PS5 DualSense","ctrl_ps4":"PS4 DualShock"
  },
@@ -1006,15 +1341,16 @@ STR = {
    "status_manual":"Status: Manual","status_sequence":"Status: Sequence (interval {v:.1f}s)",
    "status_random":"Status: Random (interval {v:.1f}s)","status_rainbow":"Status: Rainbow (cycle {v:.1f}s, brightness {b:.2f})",
    "status_pulse":"Status: Pulse (period {v:.1f}s)","status_breath":"Status: Breathing","status_wave":"Status: Wave",
-   "status_grad":"Status: Gradient",
+   "status_grad":"Status: Gradient","status_batt":"Status: Battery color",
+   "shell_color":"Shell Color",
    "ctrl_not_found":"Controller not found.",
    "ctrl_type":"Controller Model","ctrl_ps5":"PS5 DualSense","ctrl_ps4":"PS4 DualShock"
  }
 }
 
-MODE_DISPLAY = {"ar": ["يدوي","تتابع","عشوائي","قوس قزح","نبض","وميض","تنفس","نبض قلب","موجة","تدرّج"],
-                "en": ["Manual","Sequence","Random","Rainbow","Pulse","Flash","Breathing","Heartbeat","Wave","Gradient"]}
-MODE_CODE =     ["Manual","Sequence","Random","Rainbow","Pulse","Flash","Breathing","Heartbeat","Wave","Gradient"]
+MODE_DISPLAY = {"ar": ["يدوي","تتابع","عشوائي","قوس قزح","نبض","وميض","تنفس","نبض قلب","موجة","تدرّج","البطارية"],
+                "en": ["Manual","Sequence","Random","Rainbow","Pulse","Flash","Breathing","Heartbeat","Wave","Gradient","Battery"]}
+MODE_CODE =     ["Manual","Sequence","Random","Rainbow","Pulse","Flash","Breathing","Heartbeat","Wave","Gradient","Battery"]
 
 def code_to_display(lang, code):
     opts = MODE_DISPLAY.get(lang, MODE_DISPLAY["en"])
@@ -1175,7 +1511,10 @@ class App(tk.Tk):
         # يد 3D
         self.ctrl3d = Controller3D(preview_frame, controller_type="ps5", width=680, height=260, bg=CARD)
         self.ctrl3d.pack(fill="x", expand=True)
-        self.ctrl3d.bind("<Button-1>", self.pick_color)
+        # نقرة على اليد = منتقي الألوان الحي
+        self.ctrl3d.on_click = self.pick_color
+        _sc = CFG.get("shell_color", "white")
+        if _sc != "white": self.ctrl3d.set_shell(_sc)
 
         # شريط المعاينة الصغير (لون فقط) — يعكس اللون المُطبّق فعليًا
         self.preview = tk.Frame(self.card, bg=CFG.get("color","#00aaff"), height=20, bd=0, highlightthickness=0, cursor="hand2")
@@ -1213,6 +1552,20 @@ class App(tk.Tk):
         self.ctrl_type_cmb.pack(side="left")
         self.ctrl_type_cmb.bind("<<ComboboxSelected>>", self._on_ctrl_type_change)
 
+        # ===== لون اليد (أطقم DualSense الرسمية) =====
+        self._shell_keys = ["white", "black", "red", "blue", "purple"]
+        shell_names = {"ar": ["أبيض", "أسود", "أحمر", "أزرق", "بنفسجي"],
+                       "en": ["White", "Midnight Black", "Cosmic Red", "Starlight Blue", "Galactic Purple"]}
+        self._shell_names = shell_names
+        ttk.Label(ctrl_row, text=self.s["shell_color"], style="Card.TLabel").pack(side="left", padx=(18, 8))
+        cur_shell = CFG.get("shell_color", "white")
+        if cur_shell not in self._shell_keys: cur_shell = "white"
+        self.shell_cmb = ttk.Combobox(ctrl_row, values=shell_names[self.lang], state="readonly",
+                                      width=14, style="DL.TCombobox")
+        self.shell_cmb.set(shell_names[self.lang][self._shell_keys.index(cur_shell)])
+        self.shell_cmb.pack(side="left")
+        self.shell_cmb.bind("<<ComboboxSelected>>", self._on_shell_change)
+
         # ألوان سريعة + RGB/BGR
         qrow=ttk.Frame(self.card, style="Card.TFrame"); qrow.pack(anchor="w", padx=20, pady=(8,8))
         ttk.Label(qrow, text=self.s["quick"], style="Card.TLabel").pack(side="left", padx=(0,10))
@@ -1228,7 +1581,7 @@ class App(tk.Tk):
         prow=ttk.Frame(self.card, style="Card.TFrame"); prow.pack(fill="x", padx=20, pady=(6,8))
         ttk.Label(prow, text=self.s["profiles"], style="Card.TLabel").pack(side="left", padx=(0,8))
         self.prof_var=tk.StringVar(value="Default")
-        self.prof_cb=ttk.Combobox(prow, values=list(CFG.get("profiles",{}).keys()), state="readonly", width=18, textvariable=self.prof_var, style="DL.TCombobox")
+        self.prof_cb=ttk.Combobox(prow, values=list(CFG.get("profiles",{}).keys()), state="normal", width=18, textvariable=self.prof_var, style="DL.TCombobox")
         self.prof_cb.pack(side="left")
         ttk.Button(prow, text=self.s["save_profile"], style="Btn.TButton", command=self.save_profile).pack(side="left", padx=8)
         ttk.Button(prow, text=self.s["delete_profile"], style="Btn.TButton", command=self.delete_profile).pack(side="left", padx=8)
@@ -1332,18 +1685,29 @@ class App(tk.Tk):
             log("post_init err:", e)
 
     def sync_preview_tick(self):
+        hidden = False
         try:
-            if self.engine:
+            # النافذة مخفية (خلفية/tray/مصغّرة)؟ لا رسم إطلاقًا — المحرك يواصل قيادة
+            # الإضاءة الفعلية في خيطه الخاص، والواجهة تنام (صفر استهلاك أثناء اللعب).
+            hidden = self.state() in ("withdrawn", "iconic")
+            if self.engine and not hidden:
                 with self.engine._ol:
                     out = self.engine.out
                 hx = rgb_to_hex(out)
                 if self.preview.cget('bg') != hx:
                     self.preview.configure(bg=hx)
-                # --- تزامن 100% مع يد التحكم 3D ---
+                # --- تزامن 100% مع يد التحكم المعروضة ---
                 if hasattr(self, 'ctrl3d'):
                     self.ctrl3d.set_led_color(*out)
         except Exception: pass
-        self.after(33, self.sync_preview_tick)
+        self.after(400 if hidden else 33, self.sync_preview_tick)
+
+    def _on_shell_change(self, event=None):
+        idx = self.shell_cmb.current()
+        if idx < 0: return
+        key = self._shell_keys[idx]
+        CFG["shell_color"] = key; save_cfg(CFG)
+        if hasattr(self, 'ctrl3d'): self.ctrl3d.set_shell(key)
 
     def _on_ctrl_type_change(self, event=None):
         """تبديل بين PS5 و PS4 في العرض ثلاثي الأبعاد"""
@@ -1360,8 +1724,110 @@ class App(tk.Tk):
         if hasattr(self, 'ctrl3d'): self.ctrl3d.set_led_color(*rgb)
 
     def pick_color(self, e=None):
-        c=colorchooser.askcolor(color=self.preview.cget("bg"))[1]
-        if c: self.set_color_hex(c)
+        """منتقي ألوان حي مدمج — كل حركة فيه تُطبَّق على اليد فورًا بدون زر OK."""
+        self._open_live_picker()
+
+    def _open_live_picker(self):
+        if getattr(self, "_picker_win", None) is not None:
+            try:
+                if self._picker_win.winfo_exists():
+                    self._picker_win.lift(); return
+            except Exception: pass
+        orig = self.preview.cget("bg")
+        ar = self.lang == "ar"
+        win = tk.Toplevel(self); self._picker_win = win
+        win.title("اختيار لون — مباشر" if ar else "Pick color — live")
+        win.configure(bg="#131923"); win.resizable(False, False)
+        win.attributes("-topmost", True)
+        try: win.transient(self)
+        except Exception: pass
+
+        r0, g0, b0 = hex_to_rgb(orig)
+        h0, s0, v0 = colorsys.rgb_to_hsv(r0 / 255, g0 / 255, b0 / 255)
+        st = {"h": h0, "s": s0, "v": v0}
+        GW, GH, Z = 72, 52, 4                      # شبكة التدرج × التكبير = 288×208
+        SVW, SVH, HW = GW * Z, GH * Z, 30
+
+        sv = tk.Canvas(win, width=SVW, height=SVH, bg="#000000", bd=0,
+                       highlightthickness=1, highlightbackground="#2a3547", cursor="crosshair")
+        sv.grid(row=0, column=0, padx=(14, 8), pady=(14, 6))
+        hue = tk.Canvas(win, width=HW, height=SVH, bd=0,
+                        highlightthickness=1, highlightbackground="#2a3547", cursor="sb_v_double_arrow")
+        hue.grid(row=0, column=1, padx=(0, 14), pady=(14, 6))
+
+        # شريط الـ Hue — يُرسم مرة واحدة
+        for y in range(SVH):
+            r_, g_, b_ = colorsys.hsv_to_rgb(y / max(1, SVH - 1), 1.0, 1.0)
+            hue.create_line(0, y, HW, y, fill=f"#{int(r_*255):02x}{int(g_*255):02x}{int(b_*255):02x}")
+        hue_mark = hue.create_rectangle(0, 0, HW, 3, outline="#ffffff", width=2)
+
+        holder = {"img": None}
+        def render_sv():
+            base = tk.PhotoImage(width=GW, height=GH)
+            h = st["h"]
+            for y in range(GH):
+                v = 1.0 - y / (GH - 1)
+                row = "{" + " ".join(
+                    "#%02x%02x%02x" % tuple(int(c * 255) for c in colorsys.hsv_to_rgb(h, x / (GW - 1), v))
+                    for x in range(GW)) + "}"
+                base.put(row, to=(0, y))
+            big = base.zoom(Z, Z)
+            holder["img"] = big                    # مرجع حي وإلا يمسحه جامع القمامة
+            sv.delete("grad")
+            sv.create_image(0, 0, anchor="nw", image=big, tags="grad")
+            sv.tag_raise("mark")
+
+        sv.create_oval(0, 0, 0, 0, outline="#ffffff", width=2, tags="mark")
+
+        cur_hex = tk.StringVar(value=orig)
+        bar = tk.Frame(win, bg="#131923"); bar.grid(row=1, column=0, columnspan=2, sticky="we", padx=14)
+        swatch = tk.Canvas(bar, width=46, height=26, bd=0, highlightthickness=1, highlightbackground="#2a3547")
+        swatch.pack(side="left")
+        sw_rect = swatch.create_rectangle(0, 0, 46, 26, fill=orig, outline="")
+        tk.Label(bar, textvariable=cur_hex, bg="#131923", fg="#9fb0c0",
+                 font=("Consolas", 11)).pack(side="left", padx=10)
+
+        def sync_marks():
+            x = st["s"] * (SVW - 1); y = (1.0 - st["v"]) * (SVH - 1)
+            sv.coords("mark", x - 6, y - 6, x + 6, y + 6)
+            hy = st["h"] * (SVH - 1)
+            hue.coords(hue_mark, 0, hy - 1, HW, hy + 2)
+
+        def apply_live():
+            r_, g_, b_ = (int(c * 255) for c in colorsys.hsv_to_rgb(st["h"], st["s"], st["v"]))
+            hx = f"#{r_:02x}{g_:02x}{b_:02x}"
+            cur_hex.set(hx)
+            swatch.itemconfigure(sw_rect, fill=hx)
+            self.set_color_hex(hx)                 # ← مباشر: المحرك + اليد الفعلية + الرسم
+            sync_marks()
+
+        def on_sv(ev):
+            st["s"] = min(1.0, max(0.0, ev.x / (SVW - 1)))
+            st["v"] = min(1.0, max(0.0, 1.0 - ev.y / (SVH - 1)))
+            apply_live()
+
+        def on_hue(ev):
+            st["h"] = min(1.0, max(0.0, ev.y / (SVH - 1)))
+            render_sv(); apply_live()
+
+        sv.bind("<Button-1>", on_sv); sv.bind("<B1-Motion>", on_sv)
+        hue.bind("<Button-1>", on_hue); hue.bind("<B1-Motion>", on_hue)
+
+        btns = tk.Frame(win, bg="#131923"); btns.grid(row=2, column=0, columnspan=2, pady=(8, 14))
+        def close_keep():
+            try: win.destroy()
+            except Exception: pass
+            self._picker_win = None
+        def close_cancel():
+            self.set_color_hex(orig)
+            close_keep()
+        tk.Button(btns, text=("موافق" if ar else "OK"), bd=0, bg="#3b82f6", fg="#0b0f14",
+                  activebackground="#60a5fa", width=10, command=close_keep).pack(side="left", padx=6)
+        tk.Button(btns, text=("إلغاء" if ar else "Cancel"), bd=0, bg="#2a3340", fg="#e6edf3",
+                  activebackground="#3a4658", width=10, command=close_cancel).pack(side="left", padx=6)
+        win.protocol("WM_DELETE_WINDOW", close_keep)
+
+        render_sv(); sync_marks()
 
     def toggle_bgr(self):
         CFG["bgr_swap"]=not bool(CFG.get("bgr_swap", False)); save_cfg(CFG)
@@ -1389,6 +1855,7 @@ class App(tk.Tk):
         elif code=="Heartbeat": self.status_var.set("Heartbeat")
         elif code=="Wave": self.status_var.set(self.s["status_wave"])
         elif code=="Gradient": self.status_var.set(self.s["status_grad"])
+        elif code=="Battery": self.status_var.set(self.s["status_batt"])
 
     def toggle_view(self):
         new = not self.attributes("-fullscreen")

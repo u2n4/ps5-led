@@ -4,6 +4,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-07-02
+
+### Added
+- **Accurate DualSense view**: the PS5 controller is now rendered from a licensed SVG asset
+  (`assets/dualsense-svgrepo.svg`), with the light bar drawn where it really is — two strips
+  hugging the touchpad edges plus the diffusion line under its bottom edge, all synced 100%
+  with the physical lightbar. Player LEDs, mic-mute button, and monochrome face-button glyphs included.
+- **Live color picker**: built-in HSV picker that applies to the controller *while you drag* —
+  no OK button needed (Cancel restores the previous color).
+- **Battery mode**: new lighting mode that colors the lightbar by charge level
+  (green ≥60%, amber ≥30%, red below — pulsing while charging).
+- **Shell colors**: render the controller in the five official colorways —
+  White, Midnight Black, Cosmic Red, Starlight Blue, Galactic Purple.
+- **Game profiles**: three ready-made game profiles (Fortnite / COD / FIFA) and profile names
+  are now free-text, so you can name profiles after your games.
+- **Portable single-file EXE** (PyInstaller): no Python required at all.
+  `install.ps1` now prefers the portable EXE and falls back to a *minimal* Python install
+  (no docs/tests/IDLE, pip without cache) only when the EXE is unavailable.
+
+### Changed
+- **Near-zero idle cost while gaming**: the starfield and the controller preview stop
+  rendering entirely while the window is hidden/minimized; the engine writes to the
+  controller only on color changes (plus a 2s keep-alive) instead of 30 HID writes/sec.
+
+### Removed
+- The generic pseudo-3D gamepad drawing for PS5 (replaced by the accurate SVG view;
+  PS4 keeps the classic top-strip drawing that matches the DS4's real lightbar position).
+
+[2.0.0]: https://github.com/u2n4/dualled-pro/releases/tag/v2.0.0
+
 ## [1.0.0] - 2026-06-29
 
 ### Added
