@@ -96,6 +96,23 @@ def save_cfg(cfg):
     except Exception as e:
         log("cfg save err:", e)
 
+# خنق الحفظ للمسارات الساخنة (سحب المنتقي/المنزلقات): كتابة واحدة كحد أقصى بالثانية،
+# مع flush لاحق يضمن عدم ضياع آخر قيمة.
+_CFG_SAVE = {"last": 0.0, "dirty": False}
+
+def save_cfg_throttled(cfg):
+    now = time.time()
+    if now - _CFG_SAVE["last"] >= 1.0:
+        _CFG_SAVE["last"] = now; _CFG_SAVE["dirty"] = False
+        save_cfg(cfg)
+    else:
+        _CFG_SAVE["dirty"] = True
+
+def flush_cfg():
+    if _CFG_SAVE["dirty"]:
+        _CFG_SAVE["dirty"] = False; _CFG_SAVE["last"] = time.time()
+        save_cfg(CFG)
+
 CFG = load_cfg()
 
 # --------------------------- Single Instance (N slots) ---------------------------
@@ -468,6 +485,8 @@ class Engine(threading.Thread):
         super().__init__(daemon=True)
         self.b=backend; self.stop_evt=threading.Event()
         self.mode=CFG.get("last_mode","Manual")
+        if self.mode not in MODE_CODE: self.mode="Manual"
+        self._seq_i=None
         self.speed=float(CFG.get("speed",1.0))
         self.rb=float(CFG.get("rainbow_brightness",0.9))
         self.duty=float(CFG.get("flash_duty",0.5))
@@ -498,12 +517,16 @@ class Engine(threading.Thread):
         except Exception as e:
             log("engine send err:", e)
 
-    def set_mode(self,m): self.mode=m; CFG["last_mode"]=m; save_cfg(CFG)
-    def set_speed(self,v): self.speed=float(v); CFG["speed"]=self.speed; save_cfg(CFG)
-    def set_rb(self,v): self.rb=float(v); CFG["rainbow_brightness"]=self.rb; save_cfg(CFG)
-    def set_duty(self,v): self.duty=float(v); CFG["flash_duty"]=self.duty; save_cfg(CFG)
+    def set_mode(self,m):
+        # وضع غير معروف (config محرَّر يدويًا/تالف) → Manual، وإلا حلقة التشغيل تدور بلا نوم
+        self.mode = m if m in MODE_CODE else "Manual"
+        self._seq_i = None
+        CFG["last_mode"]=self.mode; save_cfg(CFG)
+    def set_speed(self,v): self.speed=float(v); CFG["speed"]=self.speed; save_cfg_throttled(CFG)
+    def set_rb(self,v): self.rb=float(v); CFG["rainbow_brightness"]=self.rb; save_cfg_throttled(CFG)
+    def set_duty(self,v): self.duty=float(v); CFG["flash_duty"]=self.duty; save_cfg_throttled(CFG)
     def set_color(self,rgb):
-        self.color=tuple(int(c) for c in rgb); CFG["color"]=rgb_to_hex(self.color); save_cfg(CFG)
+        self.color=tuple(int(c) for c in rgb); CFG["color"]=rgb_to_hex(self.color); save_cfg_throttled(CFG)
         if self.mode=="Manual": self._send(self.color)
 
 
@@ -517,11 +540,11 @@ class Engine(threading.Thread):
 
                 if m=="Manual":
                     # اللون ثابت → أرسل فقط عند التغيّر + نبضة تثبيت كل ثانيتين
-                    # (بدل 30 كتابة HID في الثانية بلا داعٍ — أخف على المعالج واليد)
+                    # (set_color يرسل فورًا عند التغيير، فالحلقة هنا للتثبيت فقط → نوم أطول)
                     with self._ol: cur = self.out
                     if tuple(c) != tuple(cur) or (time.time() - self._last_apply) > 2.0:
                         self._send(c)
-                    time.sleep(1/30)
+                    time.sleep(0.25)
 
                 elif m=="Battery":
                     # لون تلقائي حسب الشحن: أخضر ≥60، برتقالي ≥30، أحمر أقل — ونبض أثناء الشحن
@@ -542,7 +565,10 @@ class Engine(threading.Thread):
 
                 elif m=="Sequence":
                     pal=[(255,40,40),(40,200,90),(40,130,255),(160,60,255),(255,255,255),(0,0,0)]
-                    idx=int((time.time()-t0)//max(0.1,s))%len(pal); self._send(pal[idx]); time.sleep(1/30)
+                    idx=int((time.time()-t0)//max(0.1,s))%len(pal)
+                    if idx != self._seq_i:
+                        self._send(pal[idx]); self._seq_i=idx
+                    time.sleep(1/30)
 
                 elif m=="Random":
                     if i%int(max(1,s*30))==0:
@@ -580,6 +606,10 @@ class Engine(threading.Thread):
                     cyc=max(0.8,s); u=((time.time()-t0)%cyc)/cyc; k=0.5-0.5*math.cos(2*math.pi*u)
                     r=int(c[0]*(1-k)+255*k); g=int(c[1]*(1-k)+255*k); b=int(c[2]*(1-k)+255*k)
                     self._send((r,g,b)); time.sleep(1/60)
+
+                else:
+                    # حزام أمان: وضع غير معروف لا يجوز أن يدوّر الحلقة بلا نوم
+                    time.sleep(0.1)
 
                 # Auto Sleep
                 if CFG.get("auto_sleep",{}).get("enabled", False):
@@ -667,14 +697,22 @@ class Starfield(tk.Canvas):
     def start(self):
         if self.running: return
         self.running=True; self._schedule()
-    def _schedule(self):
+    def _schedule(self, delay=40):
         if not self.running or not self.winfo_exists(): return
-        self._after=self.after(40, self._tick)  # ~25 FPS
+        self._after=self.after(delay, self._tick)  # ~25 FPS وهو ظاهر، ~2Hz وهو خامل
+    def _idle(self):
+        try:
+            if not self.winfo_viewable(): return True
+            return self.winfo_toplevel().focus_displayof() is None
+        except Exception:
+            return False
     def _tick(self):
         if not self.running or not self.winfo_exists(): return
+        idle = False
         try:
-            # النافذة مخفية (tray/مصغّرة)؟ لا ترسم شيئًا — صفر استهلاك أثناء اللعب
-            if not self.winfo_viewable():
+            # مخفي أو التطبيق بلا تركيز (داخل لعبة)؟ لا رسم — صفر استهلاك
+            idle = self._idle()
+            if idle:
                 return
             w=self.winfo_width(); h=self.winfo_height()
             if not self.stars:
@@ -687,7 +725,7 @@ class Starfield(tk.Canvas):
                 if s[1]>h: s[1]=0
                 x,y,r,_=s; self.create_oval(x-r,y-r,x+r,y+r, fill="#6f7aa7", outline="")
         finally:
-            self._schedule()
+            self._schedule(500 if idle else 40)
     def stop(self):
         self.running=False
         try:
@@ -813,11 +851,7 @@ _DS_SHELLS = {
 
 # --------------------------- Controller Widget ---------------------------
 class Controller3D(tk.Canvas):
-    """
-    عرض يد التحكم متزامنًا مع اللون الفعلي 100%:
-      • PS5: رسم DualSense دقيق من أصل SVG المرخّص، بشريطي إضاءة يحضنان التاتشباد.
-      • PS4: الرسم العام السابق (شريطه العلوي يطابق مكان lightbar الحقيقي في DS4).
-    """
+    """عرض يد DualSense دقيق من أصل SVG مرخّص — شريطا الإضاءة يتزامنان مع اللون الفعلي 100%."""
     def __init__(self, master, controller_type="ps5", width=680, height=260, **kw):
         bg = kw.pop("bg", "#0b0f14")
         super().__init__(master, width=width, height=height, bg=bg, highlightthickness=0, bd=0, **kw)
@@ -855,10 +889,8 @@ class Controller3D(tk.Canvas):
         self.redraw()
 
     def set_controller_type(self, ctype):
-        """تبديل ps5/ps4 — PS5 = رسم DualSense الدقيق، PS4 = الرسم العام بشريط علوي."""
-        if ctype != self.ctrl_type:
-            self.ctrl_type = ctype
-            self.redraw()
+        """توافق خلفي — العرض DualSense دائمًا (اليد الفعلية PS4 تبقى مدعومة بالتحكم)."""
+        self.ctrl_type = ctype
 
     def set_mode(self, code):
         """تحديث وضع الإضاءة — يغيّر شكل/توقيع توهّج الشريط حسب الوضع المختار"""
@@ -888,18 +920,26 @@ class Controller3D(tk.Canvas):
         return (11, 15, 20)
 
     def redraw(self):
-        """يمسح ويعيد الرسم حسب نوع اليد."""
+        """يمسح ويعيد رسم يد DualSense مع شريطي الإضاءة."""
         self._anim = (self._anim + 1) % 360   # phase advances once per frame
         self.delete("all")
         bg = self._parse_bg()
-        geo = _load_dualsense_svg() if self.ctrl_type == "ps5" else None
+        geo = _load_dualsense_svg()
         if geo is not None:
             self._draw_ps5_svg(geo, bg)
         else:
-            # PS4 — أو فشل تحميل أصل SVG → الرسم العام كخطة بديلة
-            self._draw_body(bg)
-            self._draw_controls(bg)
-            self._draw_led_strip(self._led_color, bg)
+            self._draw_fallback(bg)
+
+    def _draw_fallback(self, bg):
+        """احتياط نادر (أصل SVG مفقود): كبسولة LED بسيطة بلون المحرك."""
+        W, H = max(1, self._width), max(1, self._height)
+        led = self._led_color
+        y = H // 2; x0, x1 = int(W * 0.25), int(W * 0.75)
+        th = max(8, int(H * 0.08))
+        for i in range(4, 0, -1):
+            self.create_line(x0, y, x1, y, fill=self._hex(self._blend(bg, led, 0.06 + 0.05 * (4 - i))),
+                             width=th + i * th, capstyle=tk.ROUND)
+        self.create_line(x0, y, x1, y, fill=self._hex(led), width=th, capstyle=tk.ROUND)
 
     # ==================== نظرة SVG الدقيقة (PS5) ====================
     def _svg_tx(self):
@@ -1067,244 +1107,6 @@ class Controller3D(tk.Canvas):
             self.create_line(*flat, fill=self._hex(self._blend(led, white, 0.5)),
                              width=max(1, th // 3), capstyle=tk.ROUND, joinstyle=tk.ROUND)
 
-    # ==================== Generic body ====================
-    def _body_metrics(self):
-        W, H = max(1, self._width), max(1, self._height)
-        return W, H, W // 2, H // 2 + 8, int(W * 0.56), int(H * 0.60)
-
-    def _draw_body(self, bg):
-        """جسم gamepad عام متماثل (winged) — ليس DualSense: بدون غطاء أبيض ولا touchpad."""
-        W, H, cx, cy, bw, bh = self._body_metrics()
-        sag = 0.05 if self.ctrl_type == "ps5" else 0.02   # ps4 = أعلى استقامة (تجميلي)
-        gr = int(bw * 0.16)
-        pts = []
-        # top crossbar — shallow bow, left→right
-        N = 12
-        for i in range(N + 1):
-            t = i / N
-            x = cx - bw * 0.34 + (bw * 0.68) * t
-            y = cy - bh * 0.40 + bh * sag * math.sin(math.pi * t)
-            pts.append((x, y))
-        # right shoulder
-        pts.append((cx + bw * 0.50, cy - bh * 0.18))
-        # right grip lobe — half circle sweeping top→outward→bottom
-        gcx, gcy = cx + bw * 0.36, cy + bh * 0.30
-        for i in range(11):
-            a = -math.pi / 2 + math.pi * (i / 10)
-            pts.append((gcx + gr * math.cos(a), gcy + gr * math.sin(a)))
-        # bottom underbelly to center
-        pts.append((cx, cy + bh * 0.30))
-        # left grip lobe (mirror)
-        gcx = cx - bw * 0.36
-        for i in range(11):
-            a = math.pi / 2 + math.pi * (i / 10)
-            pts.append((gcx + gr * math.cos(a), gcy + gr * math.sin(a)))
-        # left shoulder + back to crossbar start
-        pts.append((cx - bw * 0.50, cy - bh * 0.18))
-        flat = [c for p in pts for c in p]
-
-        # (1) drop shadow
-        sh = [c + (6 if i % 2 == 0 else 7) for i, c in enumerate(flat)]
-        self.create_polygon(sh, fill=self._hex(self._blend(bg, (0, 0, 0), 0.55)),
-                            outline="", smooth=True)
-        # (2) matte base body
-        self.create_polygon(flat, fill=self._hex((34, 37, 44)),
-                            outline=self._hex((18, 20, 26)), width=2, smooth=True)
-        # (3) restrained top sheen + bright rim (keep body matte so LED is hero)
-        sheen = []
-        for i in range(N + 1):
-            t = i / N
-            x = cx - bw * 0.30 + (bw * 0.60) * t
-            y = cy - bh * 0.36 + bh * sag * math.sin(math.pi * t)
-            sheen.append((x, y))
-        sheen += [(cx + bw * 0.30, cy - bh * 0.04), (cx - bw * 0.30, cy - bh * 0.04)]
-        self.create_polygon([c for p in sheen for c in p],
-                            fill=self._hex((52, 56, 66)), outline="", smooth=True)
-        self.create_line(cx - bw * 0.32, cy - bh * 0.40, cx + bw * 0.32, cy - bh * 0.40,
-                        fill=self._hex((90, 96, 110)), width=2, capstyle=tk.ROUND)
-        # center faceplate spine
-        self.create_rectangle(cx - bw * 0.20, cy - bh * 0.10, cx + bw * 0.20, cy + bh * 0.20,
-                            fill=self._hex((26, 28, 34)), outline=self._hex((40, 43, 50)), width=1)
-
-    def _draw_controls(self, bg):
-        """عناصر تحكم محايدة: عصوان + دي‑باد + 4 أزرار نقطية (بدون رموز سوني)."""
-        W, H, cx, cy, bw, bh = self._body_metrics()
-        # analog sticks (reuse generic helper)
-        self._draw_joystick(cx - int(bw * 0.30), cy + int(bh * 0.18), int(bw * 0.072), (34, 37, 44))
-        self._draw_joystick(cx + int(bw * 0.30), cy + int(bh * 0.18), int(bw * 0.072), (34, 37, 44))
-        # d-pad (generic plus)
-        self._draw_dpad(cx - int(bw * 0.20), cy - int(bh * 0.06), int(bw * 0.055))
-        # four neutral action buttons in a diamond (NO △○×□)
-        abx, aby = cx + int(bw * 0.20), cy - int(bh * 0.06)
-        sp = int(bw * 0.058); r = max(4, int(bw * 0.030))
-        self._draw_action_btn(abx,      aby - sp, r)
-        self._draw_action_btn(abx + sp, aby,      r)
-        self._draw_action_btn(abx,      aby + sp, r)
-        self._draw_action_btn(abx - sp, aby,      r)
-        # shoulder bumpers on the crossbar
-        by = cy - int(bh * 0.44); bwid = int(bw * 0.14); bht = max(4, int(H * 0.03))
-        for sx in (cx - int(bw * 0.30), cx + int(bw * 0.30) - bwid):
-            self.create_rectangle(sx, by, sx + bwid, by + bht,
-                                fill=self._hex((28, 31, 38)), outline=self._hex((44, 48, 56)))
-        # neutral home pill (no P/PS text)
-        hp = int(bw * 0.05)
-        self.create_rectangle(cx - hp, cy + int(bh * 0.38), cx + hp, cy + int(bh * 0.42),
-                            fill=self._hex((24, 26, 32)), outline=self._hex((52, 70, 92)))
-
-    def _draw_action_btn(self, x, y, r, ring_rgb=(90, 150, 210)):
-        """زر محايد بدون أي رمز سوني — حلقة لونية بسيطة."""
-        self.create_oval(x - r - 1, y - r + 1, x + r + 1, y + r + 3, fill="#0a0c10", outline="")
-        self.create_oval(x - r, y - r, x + r, y + r,
-                        fill=self._hex((30, 33, 40)), outline=self._hex((46, 50, 58)), width=1)
-        self.create_oval(x - r + 2, y - r + 2, x + r - 2, y + r - 2,
-                        outline=self._hex(ring_rgb), width=2)
-        hi = max(1, int(r * 0.35))
-        hx, hy = x - int(r * 0.4), y - int(r * 0.4)
-        self.create_oval(hx - hi, hy - hi, hx + hi, hy + hi, fill=self._hex((70, 74, 84)), outline="")
-
-    # ==================== LED strip (per-mode glow) ====================
-    def _glow_capsule(self, x0, x1, y, half_t, color, layers, step, base_alpha, alpha_gain, bg):
-        """طبقات كبسولة متداخلة للخارج (مستطيل + غطاءان دائريان) = توهّج ناعم."""
-        layers = min(12, max(1, int(layers)))
-        for i in range(layers, 0, -1):
-            alpha = base_alpha + alpha_gain * (layers - i)
-            grow = i * step
-            col = self._hex(self._blend(bg, color, alpha))
-            self.create_rectangle(x0, y - half_t - grow, x1, y + half_t + grow, fill=col, outline="")
-            self.create_oval(x0 - half_t - grow, y - half_t - grow, x0 + half_t + grow, y + half_t + grow, fill=col, outline="")
-            self.create_oval(x1 - half_t - grow, y - half_t - grow, x1 + half_t + grow, y + half_t + grow, fill=col, outline="")
-
-    def _draw_led_strip(self, led, bg):
-        """شريط LED أفقي = العنصر البطل؛ يتبدّل توقيع توهّجه حسب self._mode."""
-        W, H, cx, cy, bw, bh = self._body_metrics()
-        y0 = cy - int(bh * 0.40)
-        hw = int(bw * 0.40); x0 = cx - hw; x1 = cx + hw
-        th = max(6, int(H * 0.045)); half_t = th // 2
-        phase = self._anim
-        white = (255, 255, 255)
-        mode = self._mode
-
-        def hsv(h):
-            r, g, b = colorsys.hsv_to_rgb(h % 1.0, 1.0, 1.0)
-            return (int(r * 255), int(g * 255), int(b * 255))
-
-        def core(col, x_a=x0, x_b=x1, fil=True):
-            self.create_rectangle(x_a, y0 - half_t, x_b, y0 + half_t, fill=self._hex(col), outline="")
-            self.create_oval(x_a - half_t, y0 - half_t, x_a + half_t, y0 + half_t, fill=self._hex(col), outline="")
-            self.create_oval(x_b - half_t, y0 - half_t, x_b + half_t, y0 + half_t, fill=self._hex(col), outline="")
-            if fil:
-                self.create_line(x_a, y0, x_b, y0, fill=self._hex(self._blend(col, white, 0.55)), width=max(2, th // 4))
-                self.create_line(x_a, y0 - half_t + 1, x_b, y0 - half_t + 1, fill=self._hex(self._blend(col, white, 0.85)), width=1)
-
-        def pool():
-            self.create_oval(x0, y0 + th, x1, y0 + th * 2,
-                            fill=self._hex(self._blend(bg, led, 0.06)), outline="")
-
-        def slices(bright_fn, color_fn, n=24):
-            sw = (x1 - x0) / n
-            for k in range(n):
-                sx = x0 + k * sw
-                self.create_rectangle(sx, y0 - half_t, sx + sw + 1, y0 + half_t,
-                                    fill=self._hex(color_fn(k, bright_fn(k))), outline="")
-            self.create_oval(x0 - half_t, y0 - half_t, x0 + half_t, y0 + half_t, fill=self._hex(color_fn(0, 1.0)), outline="")
-            self.create_oval(x1 - half_t, y0 - half_t, x1 + half_t, y0 + half_t, fill=self._hex(color_fn(n - 1, 1.0)), outline="")
-
-        if mode == "Sequence":
-            self._glow_capsule(x0, x1, y0, half_t, led, 8, max(3, int(H * 0.016)), 0.05, 0.04, bg)
-            cells = 7; gap = 2; cw = (x1 - x0 - gap * (cells - 1)) / cells
-            comet = (phase // 8) % cells
-            for k in range(cells):
-                cx0 = x0 + k * (cw + gap); cx1 = cx0 + cw
-                col = self._blend(led, white, 0.5) if k == comet else self._blend(led, white, 0.06 * k)
-                self._glow_capsule(cx0, cx1, y0, half_t, led, 3, 2, 0.06, 0.04, bg)
-                core(col, cx0, cx1, fil=False)
-        elif mode == "Random":
-            self._glow_capsule(x0 + int(0.04 * hw), x1 + int(0.04 * hw), y0, half_t, led, 6, 3, 0.05, 0.04, bg)
-            cells = 7; gap = 3; cw = (x1 - x0 - gap * (cells - 1)) / cells
-            tbl = {0: 0.4, 1: 0.7, 2: 1.0}
-            for k in range(cells):
-                cx0 = x0 + k * (cw + gap); cx1 = cx0 + cw
-                br = tbl[((k * 73 + 29) % 100) % 3]
-                core(self._blend(bg, led, br), cx0, cx1, fil=False)
-        elif mode == "Rainbow":
-            self._glow_capsule(x0, x1, y0, half_t, led, 6, max(3, int(H * 0.016)), 0.05, 0.05, bg)
-            slices(lambda k: 1.0, lambda k, b: hsv((phase / 360.0) + k / 24.0))
-        elif mode == "Pulse":
-            self._glow_capsule(x0, x1, y0, half_t, led, 12, int(H * 0.024), 0.05, 0.05, bg)
-            self.create_rectangle(x0, y0 - (half_t - 1), x1, y0 + (half_t - 1), fill=self._hex(led), outline="")
-            core(led); pool()
-        elif mode == "Flash":
-            self._glow_capsule(x0, x1, y0, half_t, led, 2, 2, 0.18, 0.0, bg)
-            core(led)
-            self.create_rectangle(x0, y0 - half_t, x1, y0 + half_t,
-                                outline=self._hex(self._blend(led, white, 0.6)), width=2)
-        elif mode == "Breathing":
-            self._glow_capsule(x0, x1, y0, half_t, led, 12, int(H * 0.026), 0.03, 0.035, bg)
-            core(led); pool()
-        elif mode == "Heartbeat":
-            gap = max(2, int(hw * 0.1))
-            self._glow_capsule(x0, cx - gap, y0, half_t, led, 5, 3, 0.10, 0.04, bg)
-            self._glow_capsule(cx + gap, x1, y0, half_t, led, 5, 3, 0.10, 0.04, bg)
-            core(led, x0, cx - gap); core(led, cx + gap, x1)
-        elif mode == "Wave":
-            self._glow_capsule(x0, x1, y0, half_t, led, 6, int(H * 0.020), 0.05, 0.045, bg)
-            def wb(k):
-                return 0.35 + 0.65 * (0.5 + 0.5 * math.sin((phase * 0.15) - k * 0.5))
-            slices(wb, lambda k, b: self._blend(bg, led, b))
-        elif mode == "Gradient":
-            wled = self._blend(led, white, 0.85)
-            self._glow_capsule(x0, cx, y0, half_t, led, 6, int(H * 0.018), 0.05, 0.045, bg)
-            self._glow_capsule(cx, x1, y0, half_t, wled, 6, int(H * 0.018), 0.05, 0.045, bg)
-            n = 10; band0 = cx - int(0.15 * (x1 - x0)); band1 = cx + int(0.15 * (x1 - x0))
-            self.create_rectangle(x0, y0 - half_t, band0, y0 + half_t, fill=self._hex(led), outline="")
-            self.create_rectangle(band1, y0 - half_t, x1, y0 + half_t, fill=self._hex(wled), outline="")
-            sw = (band1 - band0) / n
-            for k in range(n):
-                t = k / (n - 1)
-                sx = band0 + k * sw
-                self.create_rectangle(sx, y0 - half_t, sx + sw + 1, y0 + half_t,
-                                    fill=self._hex(self._blend(led, white, 0.85 * t)), outline="")
-            self.create_oval(x0 - half_t, y0 - half_t, x0 + half_t, y0 + half_t, fill=self._hex(led), outline="")
-            self.create_oval(x1 - half_t, y0 - half_t, x1 + half_t, y0 + half_t, fill=self._hex(wled), outline="")
-        else:  # Manual + unknown
-            self._glow_capsule(x0, x1, y0, half_t, led, 10, max(3, int(H * 0.018)), 0.045, 0.05, bg)
-            core(led); pool()
-
-    # ==================== عناصر مشتركة ====================
-    def _draw_joystick(self, x, y, r, body_col):
-        """رسم عصا تحكم ثلاثية الأبعاد"""
-        # الحلقة الخارجية (حفرة)
-        self.create_oval(x - r - 3, y - r - 3, x + r + 3, y + r + 3,
-                        fill="#0a0c10", outline="#1a1d22", width=1)
-        # جسم العصا (أغمق)
-        self.create_oval(x - r, y - r, x + r, y + r,
-                        fill="#1e2025", outline="#2e3035", width=1)
-        # الحلقة المحززة
-        inner_r = int(r * 0.75)
-        self.create_oval(x - inner_r, y - inner_r, x + inner_r, y + inner_r,
-                        fill="#252830", outline="#353840", width=1)
-        # الانعكاس الضوئي
-        hi_r = int(r * 0.3)
-        hi_x = x - int(r * 0.15)
-        hi_y = y - int(r * 0.15)
-        self.create_oval(hi_x - hi_r, hi_y - hi_r, hi_x + hi_r, hi_y + hi_r,
-                        fill="#3a3d45", outline="")
-
-    def _draw_dpad(self, x, y, size):
-        """رسم D-Pad"""
-        s = size
-        col = "#2a2d32"
-        hi_col = "#3a3d42"
-        # عمودي
-        self.create_rectangle(x - s//3, y - s, x + s//3, y + s,
-                             fill=col, outline=hi_col, width=1)
-        # أفقي
-        self.create_rectangle(x - s, y - s//3, x + s, y + s//3,
-                             fill=col, outline=hi_col, width=1)
-        # مركز
-        self.create_rectangle(x - s//4, y - s//4, x + s//4, y + s//4,
-                             fill="#1a1d22", outline="")
-
 
 # --------------------------- i18n ---------------------------
 STR = {
@@ -1324,8 +1126,7 @@ STR = {
    "status_pulse":"الحالة: نبض (فترة {v:.1f}s)","status_breath":"الحالة: تنفس","status_wave":"الحالة: موجة",
    "status_grad":"الحالة: تدرّج","status_batt":"الحالة: لون حسب البطارية",
    "shell_color":"لون اليد",
-   "ctrl_not_found":"لم يتم العثور على يد التحكم.",
-   "ctrl_type":"نموذج اليد","ctrl_ps5":"PS5 DualSense","ctrl_ps4":"PS4 DualShock"
+   "ctrl_not_found":"لم يتم العثور على يد التحكم."
  },
  "en": {
    "title":"🎮 PS5 LED",
@@ -1343,8 +1144,7 @@ STR = {
    "status_pulse":"Status: Pulse (period {v:.1f}s)","status_breath":"Status: Breathing","status_wave":"Status: Wave",
    "status_grad":"Status: Gradient","status_batt":"Status: Battery color",
    "shell_color":"Shell Color",
-   "ctrl_not_found":"Controller not found.",
-   "ctrl_type":"Controller Model","ctrl_ps5":"PS5 DualSense","ctrl_ps4":"PS4 DualShock"
+   "ctrl_not_found":"Controller not found."
  }
 }
 
@@ -1623,7 +1423,8 @@ class App(tk.Tk):
         # اللغة
         box_lang=ttk.Frame(right, style="Root.TFrame"); box_lang.pack(side="right")
         ttk.Label(box_lang, text=self.s["lang"]+":", style="Sub.TLabel").pack(side="left", padx=(0,6))
-        self.lang_cmb=ttk.Combobox(box_lang, values=["العربية","English"], state="readonly", width=10)
+        self.lang_cmb=ttk.Combobox(box_lang, values=["العربية","English"], state="readonly", width=9,
+                                    style="DL.TCombobox")
         self.lang_cmb.set("العربية" if self.lang=="ar" else "English")
         self.lang_cmb.pack(side="left"); self.lang_cmb.bind("<<ComboboxSelected>>", self.on_lang)
 
@@ -1649,7 +1450,22 @@ class App(tk.Tk):
         # نقرة على اليد = منتقي الألوان الحي
         self.ctrl3d.on_click = self.pick_color
         _sc = CFG.get("shell_color", "white")
+        if _sc not in ("white", "black", "red", "blue", "purple"): _sc = "white"
         if _sc != "white": self.ctrl3d.set_shell(_sc)
+
+        # ===== لون اليد — فوق، بجانب اليد مباشرة =====
+        self._shell_keys = ["white", "black", "red", "blue", "purple"]
+        shell_names = {"ar": ["أبيض", "أسود", "أحمر", "أزرق", "بنفسجي"],
+                       "en": ["White", "Midnight Black", "Cosmic Red", "Starlight Blue", "Galactic Purple"]}
+        self._shell_names = shell_names
+        shellbox = ttk.Frame(preview_frame, style="Card.TFrame")
+        shellbox.place(relx=1.0, x=-14, y=10, anchor="ne")
+        ttk.Label(shellbox, text=self.s["shell_color"], style="Card.TLabel").pack(side="left", padx=(0, 8))
+        self.shell_cmb = ttk.Combobox(shellbox, values=shell_names[self.lang], state="readonly",
+                                      width=13, style="DL.TCombobox")
+        self.shell_cmb.set(shell_names[self.lang][self._shell_keys.index(_sc)])
+        self.shell_cmb.pack(side="left")
+        self.shell_cmb.bind("<<ComboboxSelected>>", self._on_shell_change)
 
         # شريط المعاينة الصغير (لون فقط) — يعكس اللون المُطبّق فعليًا
         self.preview = tk.Frame(self.card, bg=CFG.get("color","#00aaff"), height=20, bd=0, highlightthickness=0, cursor="hand2")
@@ -1680,30 +1496,6 @@ class App(tk.Tk):
         # ===== المنتقي الحي مدمج بجانب المنزلقات — لا نوافذ منبثقة =====
         self._build_live_picker(grid).grid(row=0, column=3, rowspan=4,
                                            sticky="ne", padx=(36, 0), pady=(0, 4))
-
-        # ===== تبديل نموذج اليد =====
-        ctrl_row = ttk.Frame(self.card, style="Card.TFrame"); ctrl_row.pack(fill="x", padx=20, pady=(4,4))
-        ttk.Label(ctrl_row, text=self.s["ctrl_type"], style="Card.TLabel").pack(side="left", padx=(0,8))
-        self.ctrl_type_var = tk.StringVar(value="PS5 DualSense")
-        self.ctrl_type_cmb = ttk.Combobox(ctrl_row, values=["PS5 DualSense", "PS4 DualShock"],
-                                           state="readonly", width=18, textvariable=self.ctrl_type_var,
-                                           style="DL.TCombobox")
-        self.ctrl_type_cmb.pack(side="left")
-        self.ctrl_type_cmb.bind("<<ComboboxSelected>>", self._on_ctrl_type_change)
-
-        # ===== لون اليد (أطقم DualSense الرسمية) =====
-        self._shell_keys = ["white", "black", "red", "blue", "purple"]
-        shell_names = {"ar": ["أبيض", "أسود", "أحمر", "أزرق", "بنفسجي"],
-                       "en": ["White", "Midnight Black", "Cosmic Red", "Starlight Blue", "Galactic Purple"]}
-        self._shell_names = shell_names
-        ttk.Label(ctrl_row, text=self.s["shell_color"], style="Card.TLabel").pack(side="left", padx=(18, 8))
-        cur_shell = CFG.get("shell_color", "white")
-        if cur_shell not in self._shell_keys: cur_shell = "white"
-        self.shell_cmb = ttk.Combobox(ctrl_row, values=shell_names[self.lang], state="readonly",
-                                      width=14, style="DL.TCombobox")
-        self.shell_cmb.set(shell_names[self.lang][self._shell_keys.index(cur_shell)])
-        self.shell_cmb.pack(side="left")
-        self.shell_cmb.bind("<<ComboboxSelected>>", self._on_shell_change)
 
         # ألوان سريعة + RGB/BGR
         qrow=ttk.Frame(self.card, style="Card.TFrame"); qrow.pack(anchor="w", padx=20, pady=(8,8))
@@ -1816,8 +1608,6 @@ class App(tk.Tk):
                 except Exception:
                     pass
         threading.Thread(target=lambda: _wait_event_loop(_restore_cb), daemon=True).start()
-        # مراقبة طلبات الاسترجاع من النسخة الثانية
-        self.after(800, self._check_restore_signal)
 
 
     # ---- helpers ----
@@ -1828,14 +1618,7 @@ class App(tk.Tk):
             if not ok:
                 messagebox.showerror("DualLED", self.s["ctrl_not_found"]); return
             self.engine=Engine(self.backend); self.engine.start()
-            # كشف تلقائي لنوع اليد — PS4 أو PS5
-            if hasattr(self, 'ctrl3d'):
-                if self.backend.kind == "ds4":
-                    self.ctrl3d.set_controller_type("ps4")
-                    log("3D view: PS4 DualShock 4 detected")
-                else:
-                    self.ctrl3d.set_controller_type("ps5")
-                    log("3D view: PS5 DualSense detected")
+            log("controller detected:", self.backend.kind)
             # مزامنة فورية
             self.engine.set_color(hex_to_rgb(CFG.get("color","#00aaff")))
             self.after(50, self.sync_preview_tick)
@@ -1865,6 +1648,16 @@ class App(tk.Tk):
         except Exception as e:
             log("tray action err:", e)
 
+    def _ui_idle(self):
+        """True = لا ترسم: النافذة مخفية/مصغّرة أو التطبيق كامل فاقد تركيز الإدخال
+        (مثال: داخل لعبة ملء الشاشة والنافذة خلفها) — المحرك يواصل عمله في خيطه."""
+        try:
+            if self.state() in ("withdrawn", "iconic"):
+                return True
+            return self.focus_displayof() is None
+        except Exception:
+            return False
+
     def sync_preview_tick(self):
         hidden = False
         try:
@@ -1873,9 +1666,8 @@ class App(tk.Tk):
                     self._handle_tray_action(self._tray_q.get_nowait())
             except queue.Empty:
                 pass
-            # النافذة مخفية (خلفية/tray/مصغّرة)؟ لا رسم إطلاقًا — المحرك يواصل قيادة
-            # الإضاءة الفعلية في خيطه الخاص، والواجهة تنام (صفر استهلاك أثناء اللعب).
-            hidden = self.state() in ("withdrawn", "iconic")
+            flush_cfg()   # يلتقط آخر قيمة من الحفظ المخنوق
+            hidden = self._ui_idle()
             if self.engine and not hidden:
                 with self.engine._ol:
                     out = self.engine.out
@@ -1894,13 +1686,6 @@ class App(tk.Tk):
         key = self._shell_keys[idx]
         CFG["shell_color"] = key; save_cfg(CFG)
         if hasattr(self, 'ctrl3d'): self.ctrl3d.set_shell(key)
-
-    def _on_ctrl_type_change(self, event=None):
-        """تبديل بين PS5 و PS4 في العرض ثلاثي الأبعاد"""
-        sel = self.ctrl_type_var.get()
-        ctype = "ps4" if "PS4" in sel else "ps5"
-        if hasattr(self, 'ctrl3d'):
-            self.ctrl3d.set_controller_type(ctype)
 
     def set_color_hex(self, hx):
         self.preview.configure(bg=hx)
@@ -2064,6 +1849,16 @@ class App(tk.Tk):
         
         # تحديث جميع العناوين والنصوص
         self.update_all_labels()
+
+        # قائمة لون اليد: القيم بلغة جديدة مع الإبقاء على الاختيار الحالي
+        if hasattr(self, "shell_cmb"):
+            cur = CFG.get("shell_color", "white")
+            if cur not in self._shell_keys: cur = "white"
+            self.shell_cmb.configure(values=self._shell_names[self.lang])
+            self.shell_cmb.set(self._shell_names[self.lang][self._shell_keys.index(cur)])
+        # سطر الحالة بلغة جديدة
+        try: self.on_mode_change()
+        except Exception: pass
         
     def update_all_labels(self):
         """تحديث جميع النصوص في الواجهة بعد تغيير اللغة"""
@@ -2102,7 +1897,7 @@ class App(tk.Tk):
                     ("الإجراء", "Action"): self.s["as_action"],
                     ("اللغة", "Language"): self.s["lang"],
                     ("البطارية", "Battery"): self.s["battery"],
-                    ("نموذج اليد", "Controller Model"): self.s["ctrl_type"]
+                    ("لون اليد", "Shell Color"): self.s["shell_color"]
                 }
                 
                 for keys, value in translations.items():
@@ -2157,6 +1952,11 @@ class App(tk.Tk):
             log(f"_update_widget_tree err for {type(widget)}: {e}")
 
     # ---- Profiles ----
+    def _after_profile_load(self):
+        if self.engine and hasattr(self, "ctrl3d"):
+            self.ctrl3d.set_mode(self.engine.mode)
+            self.mode_disp.set(code_to_display(self.lang, self.engine.mode))
+
     def load_profile(self, name):
         profs = CFG.get("profiles",{})
         snap = profs.get(name)
@@ -2164,6 +1964,7 @@ class App(tk.Tk):
         self.engine.load_from(snap)
         self.sp.set(self.engine.speed); self.rb.set(self.engine.rb); self.duty.set(self.engine.duty)
         self.preview.configure(bg=rgb_to_hex(self.engine.color))
+        self._after_profile_load()
 
     def save_profile(self):
         name = self.prof_var.get().strip() or "Custom"
@@ -2190,6 +1991,8 @@ class App(tk.Tk):
 
     # ---- Battery ----
     def draw_batt(self, p, ch):
+        if self._ui_idle():
+            return   # لا رسم أثناء الخمول — التنبيهات (poll) مستمرة
         W,H=64,18; x0,y0=2,3
         self.batt_canvas.delete("all")
         self.batt_canvas.create_rectangle(x0,y0,x0+W,y0+H, outline="#e6edf3", width=2)
@@ -2255,6 +2058,8 @@ class App(tk.Tk):
             if getattr(self, "tray", None): self.tray.destroy()
         except Exception:
             pass
+        try: flush_cfg()
+        except Exception: pass
         log("App quit by user")
         self.destroy()
 

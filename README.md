@@ -51,8 +51,8 @@ To run it again later, just paste the same line — or use the shortcut printed 
 ## ✨ Features
 
 - 🎨 **10 lighting modes** — Manual, Rainbow, Pulse, Flash, Breathing, Heartbeat, Wave, Gradient, Sequence, Random.
-- 🕹️ **Live 3D controller view** — a 3D PS5/PS4 model whose lightbar mirrors the real one **100% in sync**.
-- 🔍 **Auto-detects your controller** — picks the correct PS5 (DualSense) or PS4 (DualShock 4) model automatically.
+- 🕹️ **Live controller view** — an accurate DualSense rendering whose light bar mirrors the real one **100% in sync**, in 5 official shell colors.
+- 🔍 **Auto-detects your controller** — PS5 DualSense and PS4 DualShock 4 are both driven automatically.
 - 🔋 **Battery monitor & alerts** — low-battery, plugged-in, and full-charge notifications.
 - 💾 **Profiles** — save and switch named color/effect presets instantly.
 - 🌍 **Bilingual UI** — English & Arabic (العربية), switchable at runtime.
@@ -184,8 +184,8 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 ### ✨ المزايا
 
 - 🎨 **10 أوضاع إضاءة** — يدوي، قوس قزح، نبض، وميض، تنفّس، نبضة قلب، موجة، تدرّج، تسلسل، عشوائي.
-- 🕹️ **عرض ثلاثي الأبعاد حي** — نموذج 3D للـ PS5/PS4 إضاءته تتزامن مع اليد الحقيقية 100%.
-- 🔍 **كشف تلقائي لنوع اليد** — يعرض النموذج الصحيح (PS5 أو PS4) تلقائياً.
+- 🕹️ **عرض حي لليد** — رسم DualSense دقيق تتزامن إضاءته مع اليد الحقيقية 100%، بخمسة ألوان رسمية.
+- 🔍 **كشف تلقائي لليد** — تحكم PS5 DualSense و PS4 DualShock 4 يعمل تلقائياً.
 - 🔋 **مراقبة بطارية وتنبيهات** — تنبيه عند انخفاض الشحن، التوصيل، والاكتمال.
 - 💾 **ملفات تعريف** — احفظ وبدّل بين إعدادات لون/تأثير محفوظة فوراً.
 - 🌍 **واجهة ثنائية اللغة** — عربي وإنجليزي، تتبدّل أثناء التشغيل.

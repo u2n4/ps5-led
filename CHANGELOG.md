@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-02
+
+### Changed
+- **True zero-cost while gaming**: rendering now also pauses when the app loses input focus
+  (fullscreen game over the window), not just when minimized — starfield, controller preview,
+  and battery drawing all sleep; the engine keeps driving the real lightbar.
+- Engine hardening: unknown mode from a hand-edited config can no longer busy-spin a CPU core;
+  Manual keep-alive relaxed to 0.25s; Sequence skips duplicate HID sends.
+- Config writes throttled to ≤1/sec during picker/slider drags (was ~100 writes/sec).
+- Language switch polish: modern dark style for the language selector, shell-color list and
+  status line now switch language correctly, profile load syncs the mode display.
+- PS5-only view: PS4 hardware still fully controlled, drawing is always the DualSense render.
+
+[2.3.0]: https://github.com/u2n4/ps5-led/releases/tag/v2.3.0
+
 ## [2.2.0] - 2026-07-02
 
 ### Changed
