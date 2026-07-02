@@ -74,6 +74,21 @@ $exeOk = $false
 try {
     Invoke-WebRequest -Uri $ExeUrl -OutFile $ExeFile
     if ((Get-Item $ExeFile).Length -gt 5MB) { $exeOk = $true }
+    # Integrity: verify against the SHA256 manifest published with the release.
+    # Manifest missing (older releases) -> skip; hash mismatch -> reject the EXE.
+    if ($exeOk) {
+        try {
+            $manifest = (Invoke-WebRequest -Uri "$ExeUrl.sha256").Content
+            if ($manifest -is [byte[]]) { $manifest = [System.Text.Encoding]::UTF8.GetString($manifest) }
+            $expected = ($manifest.Trim() -split "\s+")[0].ToLower()
+            $actual = (Get-FileHash $ExeFile -Algorithm SHA256).Hash.ToLower()
+            if ($expected.Length -eq 64 -and $actual -ne $expected) {
+                Write-Warn "Portable EXE failed SHA256 verification - discarding it."
+                Remove-Item $ExeFile -Force -ErrorAction SilentlyContinue
+                $exeOk = $false
+            }
+        } catch { }
+    }
 } catch { }
 
 if ($exeOk) {

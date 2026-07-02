@@ -754,7 +754,9 @@ def _parse_svg_path_d(d):
     x = y = 0.0
     i = 0
     cmd = None
-    while i < len(toks):
+    n = len(toks)
+    need = {"M": 2, "L": 2, "H": 1, "V": 1, "C": 6}
+    while i < n:
         t = toks[i]
         if t.isalpha():
             if t not in "MLCHVZ":
@@ -764,6 +766,9 @@ def _parse_svg_path_d(d):
                 if cur: subs.append(cur)
                 cur = []
             continue
+        # معاملات ناقصة في نهاية السلسلة → فشل آمن بدل IndexError
+        if cmd in need and i + need[cmd] > n:
+            return None
         if cmd == "M":
             x, y = float(toks[i]), float(toks[i + 1]); i += 2
             if cur: subs.append(cur)
@@ -1195,6 +1200,46 @@ class TrayIcon:
             u32 = ctypes.windll.user32
             sh = ctypes.windll.shell32
             k32 = ctypes.windll.kernel32
+            LRESULT = ctypes.c_ssize_t
+
+            # prototypes صريحة — بدونها ctypes يفترض c_int فيقصّ الهاندلات فوق 4GB على 64-bit
+            u32.DefWindowProcW.restype = LRESULT
+            u32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            k32.GetModuleHandleW.restype = wintypes.HINSTANCE
+            k32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            u32.RegisterClassW.restype = wintypes.WORD
+            u32.CreateWindowExW.restype = wintypes.HWND
+            u32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+                                            wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                            ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+                                            wintypes.HINSTANCE, wintypes.LPVOID]
+            u32.LoadImageW.restype = wintypes.HANDLE
+            u32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                       ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            u32.LoadIconW.restype = wintypes.HICON
+            u32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPVOID]
+            u32.GetMessageW.restype = ctypes.c_int
+            u32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                        wintypes.UINT, wintypes.UINT]
+            u32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            u32.DispatchMessageW.restype = LRESULT
+            u32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            u32.PostQuitMessage.argtypes = [ctypes.c_int]
+            u32.PostMessageW.restype = wintypes.BOOL
+            u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            u32.CreatePopupMenu.restype = wintypes.HMENU
+            u32.AppendMenuW.restype = wintypes.BOOL
+            u32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+            u32.TrackPopupMenu.restype = ctypes.c_int
+            u32.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int,
+                                           ctypes.c_int, wintypes.HWND, wintypes.LPVOID]
+            u32.DestroyMenu.restype = wintypes.BOOL
+            u32.DestroyMenu.argtypes = [wintypes.HMENU]
+            u32.SetForegroundWindow.restype = wintypes.BOOL
+            u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            u32.GetCursorPos.restype = wintypes.BOOL
+            u32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+            sh.Shell_NotifyIconW.restype = wintypes.BOOL
 
             class NID(ctypes.Structure):
                 _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
