@@ -447,7 +447,7 @@ This module is pure: bytes in, bytes out, no I/O and no Windows imports, so it
 runs under CI on Linux.
 """
 
-from .crc import CRC_SIZE, OUTPUT_SEED, append_crc32
+from .crc import OUTPUT_SEED, append_crc32
 
 VENDOR_ID = 0x054C
 PRODUCT_IDS = (0x0CE6, 0x0DF2)  # DualSense, DualSense Edge
@@ -2082,11 +2082,14 @@ class TestEngineThread(unittest.TestCase):
         self.assertEqual(state.snapshot()["rgb"], (1, 2, 3))
 
     def test_stop_joins_the_thread(self):
+        before = threading.active_count()
         engine = Engine(AppState(), lambda rgb: None, interval=0.005)
         engine.start()
+        self.assertTrue(engine.is_alive())
         engine.stop()
-        self.assertEqual(threading.active_count(), threading.active_count())
         self.assertFalse(engine.is_alive())
+        self.assertEqual(threading.active_count(), before,
+                         "stop() must join the thread, not leak it")
 
     def test_a_failing_writer_does_not_kill_the_thread(self):
         calls = []
