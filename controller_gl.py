@@ -79,6 +79,9 @@ class Orbit:
         self.last_sample_at = None
         self.last_tick = None
 
+        # Ali drives the view himself when this is off.
+        self.stick_enabled = True
+
     def reset(self):
         self.rotation = (0.0, 0.0, 0.0, 1.0)
         self.filter = Orientation()
@@ -120,7 +123,7 @@ class Orbit:
                     delta = multiply(q, conjugate(old_q))
                     self.rotation = normalise(multiply(delta, self.rotation))
         fresh = self.last_sample_at is not None and now-self.last_sample_at <= 0.25
-        if fresh and not self.dragging and (sx or sy):
+        if fresh and self.stick_enabled and not self.dragging and (sx or sy):
             self.rotate(sx*95*dt_tick, sy*95*dt_tick)
         return self.rotation != before
 
@@ -135,10 +138,21 @@ class Orbit:
 SPLIT_MESHES = {"Object_16": ("stick_left", "stick_right"),
                 "Object_14": ("stick_left", "stick_right"),
                 "Object_63": ("stick_left", "stick_right"),
-                "Object_59": ("trigger_left", "trigger_right")}
+                "Object_59": ("shoulder_left", "shoulder_right")}
+
+# The shoulder block holds FOUR things: both bumpers and both triggers. Its Z
+# histogram has a clear valley here -- measured on the mesh, 1,392 triangles in
+# front of it and 804 behind, identically on both sides. In front sits the
+# bumper (wider, shorter, nearer the face); behind sits the trigger (taller,
+# narrower, reaching down and back). Splitting only left/right made R1 move
+# whenever R2 did.
+SHOULDER_SPLIT_Z = -0.07
 FACE_BUTTONS = {"Object_68": "square", "Object_72": "circle",
                 "Object_66": "triangle", "Object_70": "cross"}
 DPAD_MESHES = {"Object_55", "Object_57"}
+# The touchpad is a button as well as a surface: pressing it clicks the whole
+# panel down. Object_51 is that panel.
+TOUCHPAD_MESH = "Object_51"
 
 # Bit positions in the DualSense button word, per the Linux kernel's
 # hid-playstation.c. The low nibble is a hat, not four flags: 8 means centred.
@@ -154,24 +168,33 @@ HAT_VECTORS = {0: (0, 1), 1: (1, 1), 2: (1, 0), 3: (1, -1),
 # 0.18 for the same reason, which is why the model never drifts on its own.
 STICK_DEADZONE = 0.16
 STICK_TILT_DEG = 14.0
-TRIGGER_TILT_DEG = 11.0
+TRIGGER_TILT_DEG = 22.0     # hinged at the top, so the visible tip sweeps
+BUMPER_TILT_DEG = 7.0       # a bumper hinges much less than a trigger
 BUTTON_TRAVEL = 0.018
 DPAD_TILT_DEG = 6.0
 
 
-def split_side(mesh):
-    """Left and right index lists for a mesh holding both sides.
+def split_parts(mesh):
+    """(part name, index list) for a mesh that holds more than one moving part.
 
-    Split per TRIANGLE, on the average X of its three corners, so no triangle
-    is ever torn between the two halves.
+    Split per TRIANGLE, on the average of its three corners, so no triangle is
+    ever torn between two parts. The shoulder block splits twice: left/right on
+    X, then bumper/trigger on Z.
     """
     verts, indices = mesh["vertices"], mesh["indices"]
-    left, right = [], []
+    left_name, right_name = SPLIT_MESHES[mesh["name"]]
+    shoulder = mesh["name"] == "Object_59"
+    groups = {}
     for i in range(0, len(indices), 3):
         a, b, c = indices[i], indices[i+1], indices[i+2]
-        mid = (verts[3*a] + verts[3*b] + verts[3*c]) / 3.0
-        (left if mid < 0 else right).extend((a, b, c))
-    return left, right
+        mid_x = (verts[3*a] + verts[3*b] + verts[3*c]) / 3.0
+        side = right_name if mid_x >= 0 else left_name
+        if shoulder:
+            mid_z = (verts[3*a+2] + verts[3*b+2] + verts[3*c+2]) / 3.0
+            suffix = "left" if side.endswith("left") else "right"
+            side = ("bumper_" if mid_z > SHOULDER_SPLIT_Z else "trigger_") + suffix
+        groups.setdefault(side, []).extend((a, b, c))
+    return list(groups.items())
 
 
 def centroid(mesh, indices):
@@ -181,6 +204,21 @@ def centroid(mesh, indices):
         return (0.0, 0.0, 0.0)
     n = len(seen)
     return tuple(sum(verts[3*i + axis] for i in seen) / n for axis in range(3))
+
+
+def pivot_for(part, mesh, indices):
+    """Where the part turns.
+
+    Most parts turn about their own centre. A trigger does not: it hangs from
+    the top edge and the bottom sweeps, so hinging it in the middle moves the
+    hidden half as much as the tip and the press barely reads from the front.
+    """
+    cx, cy, cz = centroid(mesh, indices)
+    if part and part.startswith("trigger_"):
+        verts = mesh["vertices"]
+        top = max(verts[3*i + 1] for i in set(indices))
+        return (cx, top, cz)
+    return (cx, cy, cz)
 
 
 def load_mesh(path):
@@ -328,8 +366,7 @@ class ControllerGL(OpenGLFrame):
             # A mesh holding both sides becomes two entries; everything else
             # stays one. Only entries with a part name are ever transformed.
             if mesh["name"] in SPLIT_MESHES:
-                left_name, right_name = SPLIT_MESHES[mesh["name"]]
-                halves = zip((left_name, right_name), split_side(mesh))
+                halves = split_parts(mesh)
             else:
                 halves = ((self._part_name(mesh), mesh["indices"]),)
             for part, index_list in halves:
@@ -337,7 +374,7 @@ class ControllerGL(OpenGLFrame):
                     continue
                 indices = (ctypes.c_uint * len(index_list))(*index_list)
                 self.meshes.append((mesh, vertices, normals, indices, uvs,
-                                    part, centroid(mesh, index_list)))
+                                    part, pivot_for(part, mesh, index_list)))
         # Release decoded JSON arrays once the render buffers own them.
         self.model = {"bounds": self.model.get("bounds")}
 
@@ -446,6 +483,8 @@ class ControllerGL(OpenGLFrame):
             return FACE_BUTTONS[name]
         if name in DPAD_MESHES:
             return "dpad"
+        if name == TOUCHPAD_MESH:
+            return "touchpad"
         # The D-pad's glyphs and insets are separate meshes with generic slots;
         # they are the only glyph/inset geometry on the far left, so position
         # identifies them without hard-coding eleven more object names.
@@ -471,6 +510,8 @@ class ControllerGL(OpenGLFrame):
             GL.glRotatef(x*STICK_TILT_DEG, 0, 1, 0)
         elif part.startswith("trigger_"):
             GL.glRotatef(-state*TRIGGER_TILT_DEG, 1, 0, 0)
+        elif part.startswith("bumper_"):
+            GL.glRotatef(-BUMPER_TILT_DEG, 1, 0, 0)
         elif part == "dpad":
             x, y = state
             GL.glRotatef(-y*DPAD_TILT_DEG, 1, 0, 0)
@@ -500,6 +541,10 @@ class ControllerGL(OpenGLFrame):
         if right > 0.02:
             out["trigger_right"] = right
         buttons = sample.get("buttons") or 0
+        for part, bit in (("bumper_left", 8), ("bumper_right", 9),
+                          ("touchpad", 17)):
+            if buttons & (1 << bit):
+                out[part] = True
         for name, bit in BUTTON_BITS.items():
             if buttons & (1 << bit):
                 out[name] = True

@@ -64,6 +64,7 @@ DEFAULT_CFG = {
     "max_instances": 1,                  # السماح بـ 5 نسخ كحد أقصى
     "minimize_to_tray": True,            # تصغير للشريط السفلي بدلاً من الإغلاق
     "shell_color": "white",              # طقم ألوان اليد المعروضة
+    "stick_view": True,                  # هل يدوّر الستيك الأيمن العرض
     "profiles": {
         "Default":  {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#00aaff"},
         "Fortnite": {"mode":"Manual","speed":1.0,"rainbow_brightness":0.9,"flash_duty":0.5,"color":"#3b82f6"},
@@ -1098,6 +1099,7 @@ STR = {
    "status_pulse":"الحالة: نبض (فترة {v:.1f}s)","status_breath":"الحالة: تنفس","status_wave":"الحالة: موجة",
    "status_grad":"الحالة: تدرّج","status_batt":"الحالة: لون حسب البطارية",
    "shell_color":"لون اليد",
+   "stick_view":"تدوير بالستيك",
    "ctrl_not_found":"لم يتم العثور على يد التحكم."
  },
  "en": {
@@ -1116,6 +1118,7 @@ STR = {
    "status_pulse":"Status: Pulse (period {v:.1f}s)","status_breath":"Status: Breathing","status_wave":"Status: Wave",
    "status_grad":"Status: Gradient","status_batt":"Status: Battery color",
    "shell_color":"Shell Color",
+   "stick_view":"Stick turns view",
    "ctrl_not_found":"Controller not found."
  }
 }
@@ -1160,6 +1163,7 @@ class ControllerView(ttk.Frame):
         self._led = (0, 170, 255)
         self._mode = "Manual"
         self._press_xy = None
+        self._stick_orbit = True
         self.on_click = None          # set by App after construction
         self.gl = None
         self.canvas = None
@@ -1189,6 +1193,7 @@ class ControllerView(ttk.Frame):
             self._gl_error = exc
             self.gl = None
             return False
+        self.gl.orbit.stick_enabled = self._stick_orbit
         self.gl.pack(fill="both", expand=True)
         # A click must still open the colour picker, but Button-1 already
         # drives the orbit. Bind alongside it (add="+") and treat a release
@@ -1285,6 +1290,12 @@ class ControllerView(ttk.Frame):
     def set_gyro_enabled(self, enabled):
         if self.gl is not None:
             self.gl.orbit.gyro_enabled = bool(enabled)
+
+    def set_stick_orbit(self, enabled):
+        """Let the right stick turn the view, or leave the view alone."""
+        self._stick_orbit = bool(enabled)
+        if self.gl is not None:
+            self.gl.orbit.stick_enabled = self._stick_orbit
 
     def reset_view(self):
         if self.gl is not None:
@@ -1637,6 +1648,18 @@ class App(tk.Tk):
         self.shell_cmb.pack(side="left")
         self.shell_cmb.bind("<<ComboboxSelected>>", self._on_shell_change)
 
+        # Off = the view holds still and only the mouse moves it. On a resting
+        # controller the right stick reads up to 0.109, so anyone who wants to
+        # line the model up and leave it there needs this switch.
+        stickbox = ttk.Frame(preview_frame, style="Card.TFrame")
+        stickbox.place(x=14, y=10, anchor="nw")
+        self.stick_view_var = tk.BooleanVar(value=bool(CFG.get("stick_view", True)))
+        ttk.Checkbutton(stickbox, text=self.s["stick_view"],
+                        variable=self.stick_view_var,
+                        command=self._on_stick_view,
+                        style="DL.TCheckbutton").pack(side="left")
+        self.ctrl3d.set_stick_orbit(self.stick_view_var.get())
+
         # شريط المعاينة الصغير (لون فقط) — يعكس اللون المُطبّق فعليًا
         self.preview = tk.Frame(self.card, bg=CFG.get("color","#00aaff"), height=20, bd=0, highlightthickness=0, cursor="hand2")
         self.preview.pack(padx=20, pady=(0, 6), fill="x"); self.preview.pack_propagate(False)
@@ -1867,6 +1890,12 @@ class App(tk.Tk):
                                 print("preview inputs unavailable: %r" % (exc,))
         except Exception: pass
         self.after(400 if hidden else 33, self.sync_preview_tick)
+
+    def _on_stick_view(self):
+        enabled = bool(self.stick_view_var.get())
+        CFG["stick_view"] = enabled; save_cfg(CFG)
+        if hasattr(self, 'ctrl3d'):
+            self.ctrl3d.set_stick_orbit(enabled)
 
     def _on_shell_change(self, event=None):
         idx = self.shell_cmb.current()
