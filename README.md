@@ -169,6 +169,12 @@ PRs and issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Good firs
 
 Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https://github.com/trezor/cython-hidapi). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
 
+## 🎨 Credits
+
+- **3D model:** [PS5 Controller](https://sketchfab.com/3d-models/ps5-controller-b7bb9c5102a04cb0b1966c6d02bad7d6) by [Taohid Animation](https://sketchfab.com/taohidanimation), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See [ATTRIBUTION.md](ATTRIBUTION.md) for the full notice and the modifications made.
+- **3D rendering:** [three.js](https://threejs.org/) r185, MIT licence.
+- **Inspiration:** thanks to [DualSense Studio](https://dualsensestudio.pages.dev/) for showing what a live 3D lightbar view could look like — no code was taken from it.
+
 ---
 
 <div align="center" dir="rtl">

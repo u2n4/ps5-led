@@ -10,3 +10,4 @@
 *.gif binary
 *.jpg binary
 *.exe binary
+*.glb binary
