@@ -87,9 +87,29 @@ class TestGuard(BridgeCase):
         status, _ = get(self.base + "/api/boot?t=" + self.token, headers)
         self.assertEqual(status, 403)
 
-    def test_the_guard_applies_to_static_files_too(self):
-        status, _ = get(self.base + "/index.html")
-        self.assertEqual(status, 403)
+    def test_static_files_do_not_need_the_token(self):
+        # This assertion used to be its exact opposite, and that is what broke
+        # the app: a browser asks for css/app.css and js/app.js with no token,
+        # because index.html references them relatively, and an ES module's
+        # imports cannot carry one at all. The page was served and then refused
+        # everything it needed to run.
+        for path in ("/index.html", "/css/app.css", "/js/app.js"):
+            status, _ = get(self.base + path)
+            self.assertEqual(status, 200, path)
+
+    def test_the_api_still_needs_the_token(self):
+        for path in ("/api/boot", "/api/stream"):
+            status, _ = get(self.base + path, self.origin)
+            self.assertEqual(status, 403, path)
+
+    def test_an_unauthenticated_traversal_is_still_refused(self):
+        # Static is open now, so _serve_static's traversal guard is the only
+        # thing left between an anonymous caller and the rest of the disk.
+        for path in ("/../ps5led/bridge.py",
+                     "/%2e%2e/ps5led/bridge.py",
+                     "/../../../Windows/win.ini"):
+            status, _ = get(self.base + path)
+            self.assertIn(status, (403, 404), path)
 
 
 class TestStatic(BridgeCase):
