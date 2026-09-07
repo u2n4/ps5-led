@@ -55,6 +55,28 @@ BOOT_COLOUR_WRITES = 3
 BOOT_COLOUR_INTERVAL = 0.45
 
 
+def clamp_rgb(rgb):
+    """An (r, g, b) tuple of ints in 0..255, or None if it is not a colour.
+
+    The page can post anything. Before this, an out-of-range channel raised
+    ValueError inside _build_packet while _last_rgb had already recorded it, so
+    one bad colour made every later _connect open a handle, raise, close it and
+    retry forever.
+    """
+    try:
+        r, g, b = rgb
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for channel in (r, g, b):
+        try:
+            value = int(round(float(channel)))
+        except (TypeError, ValueError):
+            return None
+        out.append(max(0, min(255, value)))
+    return tuple(out)
+
+
 def choose_device(infos):
     """Prefer a DualSense, then a DualShock 4; ignore anything else."""
     for wanted in (ds.PRODUCT_IDS, ds4.PRODUCT_IDS):
@@ -82,6 +104,14 @@ class DeviceManager(object):
         # where a write is actually attempted (see _write_packet), so --doctor
         # can still name the reason the lightbar stopped responding.
         self._last_write_error = None
+        # Also separate from _last_error, for the same reason but a different
+        # writer: write_colour's "no device connected" fires about 30 times a
+        # second in an animated mode while disconnected, which would bury the
+        # real connect failure under microseconds. Written only by _connect,
+        # and cleared only by a successful connect, so a live bridge polling
+        # describe() sees why a connection is not up rather than a message
+        # from whichever write happened to run last.
+        self._connect_error = None
         self._last_rgb = None
         self._stop = threading.Event()
         self._thread = None
@@ -137,6 +167,7 @@ class DeviceManager(object):
                 "gyro_scales": self._scales,
                 "last_error": self._last_error,
                 "last_write_error": self._last_write_error,
+                "connect_error": self._connect_error,
             }
 
     # -- writing -----------------------------------------------------------
@@ -149,6 +180,12 @@ class DeviceManager(object):
         tick lands on a manager that has not connected yet, on every single
         run), which is why it is a return value and not an exception.
         """
+        cleaned = clamp_rgb(rgb)
+        if cleaned is None:
+            with self._lock:
+                self._last_error = "not a colour: %r" % (rgb,)
+            return False
+        rgb = cleaned
         with self._lock:
             device, info, is_ds5 = self._device, self._info, self._is_ds5
             # Record the caller's intent unconditionally -- success or not --
@@ -159,7 +196,10 @@ class DeviceManager(object):
             # engine's retry does not make this redundant: the resend is what
             # covers the gap between the connection coming back and the engine's
             # next tick, and it is the only recovery path at all for a caller
-            # that is not the engine.
+            # that is not the engine. Safe to record unconditionally because
+            # rgb has already been through clamp_rgb above -- it is always a
+            # valid 0..255 triple here, so it can no longer poison the resend
+            # the way an out-of-range or malformed value used to.
             self._last_rgb = tuple(rgb)
             if device is None:
                 # Deliberately not recorded as a write error: at startup the
@@ -247,6 +287,12 @@ class DeviceManager(object):
 
         info = choose_device(enumerate_devices(ds.VENDOR_ID))
         if info is None:
+            # The single most common state of all: nothing plugged in. Still a
+            # reason worth showing a live consumer -- a bridge page watching
+            # describe() has no other way to tell "no controller" apart from
+            # any other connect failure.
+            with self._lock:
+                self._connect_error = "no compatible controller found"
             return False
         device = HidDevice.open(info.path)
         # From here on the open handle is only reachable through this local,
@@ -359,11 +405,12 @@ class DeviceManager(object):
                 self._device, self._info = device, info
                 self._is_ds5, self._scales = is_ds5, scales
                 # Normally None, which clears whatever the failed attempts
-                # before this one left behind. When the calibration read is the
-                # one thing that did not work, this is the only place that
-                # reason survives -- the connection succeeded, so nothing later
-                # will fail and record it.
-                self._last_error = calibration_error
+                # before this one left behind (including "no compatible
+                # controller found" from an earlier call). When the
+                # calibration read is the one thing that did not work, this is
+                # the only place that reason survives -- the connection
+                # succeeded, so nothing later will fail and record it.
+                self._connect_error = calibration_error
                 # Published in the same critical section as the handle, not
                 # after it: _close() drops the handle under this lock and only
                 # then announces connected=False, so an update left outside

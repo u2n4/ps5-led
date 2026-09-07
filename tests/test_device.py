@@ -334,8 +334,8 @@ class TestCalibrationDiagnostics(unittest.TestCase):
 
         self.assertTrue(view["connected"])
         self.assertIsNone(view["gyro_scales"])
-        self.assertIn("refused", view["last_error"])
-        self.assertIn("Win32 error 31", view["last_error"],
+        self.assertIn("refused", view["connect_error"])
+        self.assertIn("Win32 error 31", view["connect_error"],
                       "the Win32 reason must survive the connect, not be dropped")
 
     def test_implausible_data_is_not_reported_as_a_refusal(self):
@@ -347,8 +347,8 @@ class TestCalibrationDiagnostics(unittest.TestCase):
 
         self.assertTrue(view["connected"])
         self.assertIsNone(view["gyro_scales"])
-        self.assertIn("implausible", view["last_error"])
-        self.assertNotIn("refused", view["last_error"])
+        self.assertIn("implausible", view["connect_error"])
+        self.assertNotIn("refused", view["connect_error"])
 
     def test_a_healthy_read_leaves_no_error_behind(self):
         view = self._connect_with(FakeDevice()).describe()
@@ -532,6 +532,73 @@ class TestStartIsIdempotent(unittest.TestCase):
         finally:
             manager.stop()
         self.assertFalse(first.is_alive())
+
+
+class TestDescribeForALiveConsumer(unittest.TestCase):
+    """The bridge polls describe() while the engine runs; the old single
+    _last_error field was overwritten about 30 times a second."""
+
+    def test_connect_error_is_its_own_field(self):
+        self.assertIn("connect_error", DeviceManager(AppState()).describe())
+
+    def test_a_write_with_no_device_does_not_erase_the_connect_reason(self):
+        install_fake_hid(self, [], lambda path: None)  # nothing to connect to
+        manager = DeviceManager(AppState())
+        self.assertFalse(manager._connect())
+        reason = manager.describe()["connect_error"]
+        self.assertTrue(reason, "a failed connect must leave a reason")
+
+        for _ in range(30):  # what an animated mode does in one second
+            manager.write_colour((1, 2, 3))
+
+        self.assertEqual(manager.describe()["connect_error"], reason,
+                         "write_colour overwrote the connect reason")
+
+    def test_a_successful_connect_clears_the_connect_reason(self):
+        device = FakeDevice()
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        manager._last_error = "stale"
+        self.assertTrue(manager._connect())
+        self.assertIsNone(manager.describe()["connect_error"])
+
+
+class TestColourIsClamped(unittest.TestCase):
+    """The page can post any colour. Before the clamp, one out-of-range value
+    poisoned _last_rgb and every later _connect opened a handle, raised on
+    _build_packet, closed it and retried forever."""
+
+    def _manager(self, device):
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        self.assertTrue(manager._connect())
+        return manager
+
+    def test_out_of_range_channels_are_clamped_not_raised(self):
+        device = FakeDevice()
+        manager = self._manager(device)
+        self.assertTrue(manager.write_colour((300, -5, 128)))
+        self.assertEqual(manager._last_rgb, (255, 0, 128))
+
+    def test_floats_are_accepted_and_rounded(self):
+        device = FakeDevice()
+        manager = self._manager(device)
+        self.assertTrue(manager.write_colour((10.6, 20.2, 30.0)))
+        self.assertEqual(manager._last_rgb, (11, 20, 30))
+
+    def test_a_poisoned_colour_cannot_break_the_next_connect(self):
+        device = FakeDevice()
+        manager = self._manager(device)
+        manager.write_colour((999, 999, 999))
+        # The resend on the next connect must still build.
+        self.assertTrue(manager._connect())
+
+    def test_a_malformed_colour_is_refused_without_recording_it(self):
+        device = FakeDevice()
+        manager = self._manager(device)
+        before = manager._last_rgb
+        self.assertFalse(manager.write_colour(("red", 0, 0)))
+        self.assertEqual(manager._last_rgb, before)
 
 
 if __name__ == "__main__":
