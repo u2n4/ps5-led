@@ -69,7 +69,6 @@ Create `tests/__init__.py` empty, and `tests/test_crc.py`:
 
 ```python
 import unittest
-import zlib
 
 from ps5led.crc import (
     FEATURE_SEED,
