@@ -43,6 +43,10 @@ INFINITE = 0xFFFFFFFF
 
 HIDP_STATUS_SUCCESS = 0x00110000
 
+# CTL_CODE(FILE_DEVICE_KEYBOARD=0x0b, 100, METHOD_OUT_DIRECT, FILE_ANY_ACCESS).
+# The report id goes in byte 0 of the buffer; the driver fills the rest.
+IOCTL_HID_GET_FEATURE = 0xB0192
+
 TRANSPORT_USB = "usb"
 TRANSPORT_BT = "bt"
 _TRANSPORT_BY_INPUT_LENGTH = {64: TRANSPORT_USB, 78: TRANSPORT_BT}
@@ -93,8 +97,14 @@ _hid.HidP_GetCaps.argtypes = [ctypes.c_void_p, ctypes.POINTER(HIDP_CAPS)]
 _hid.HidP_GetCaps.restype = ctypes.c_long
 _hid.HidD_GetProductString.argtypes = [HANDLE, ctypes.c_void_p, wintypes.ULONG]
 _hid.HidD_GetProductString.restype = wintypes.BOOLEAN
-_hid.HidD_GetFeature.argtypes = [HANDLE, ctypes.c_void_p, wintypes.ULONG]
-_hid.HidD_GetFeature.restype = wintypes.BOOLEAN
+# HidD_GetFeature is deliberately absent: it issues a synchronous
+# DeviceIoControl with a NULL lpOverlapped, and Microsoft documents that on a
+# handle opened FILE_FLAG_OVERLAPPED -- which HidDevice.open always does -- that
+# call can report completion before the driver is finished with the buffer. The
+# buffer here is a frame-local create_string_buffer, so "completed early" means
+# the kernel writes into freed heap. get_feature() drives the same IOCTL through
+# an overlapped DeviceIoControl instead, exactly as hidapi's Windows backend
+# does, and for the same reason.
 
 _setupapi.SetupDiGetClassDevsW.argtypes = [ctypes.POINTER(GUID), wintypes.LPCWSTR,
                                            wintypes.HWND, wintypes.DWORD]
@@ -131,6 +141,11 @@ _kernel32.WaitForSingleObject.argtypes = [HANDLE, wintypes.DWORD]
 _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.CancelIoEx.argtypes = [HANDLE, ctypes.POINTER(OVERLAPPED)]
 _kernel32.CancelIoEx.restype = wintypes.BOOL
+_kernel32.DeviceIoControl.argtypes = [HANDLE, wintypes.DWORD, ctypes.c_void_p,
+                                      wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                      ctypes.POINTER(wintypes.DWORD),
+                                      ctypes.POINTER(OVERLAPPED)]
+_kernel32.DeviceIoControl.restype = wintypes.BOOL
 
 
 class DeviceInfo(NamedTuple):
@@ -403,16 +418,60 @@ class HidDevice(object):
             self._end()
 
     def get_feature(self, report_id, length):
-        """Read a feature report, or None if the device refused."""
+        """Read a feature report, or None if the device refused.
+
+        Overlapped DeviceIoControl, not HidD_GetFeature: see the note by the
+        hid.dll prototypes. The OVERLAPPED is per call and GetOverlappedResult
+        below blocks, so the kernel is provably finished with ``buf`` before this
+        frame -- and the buffer in it -- goes away.
+
+        The event is per call rather than one of the two per-instance ones
+        because read() and write() may each legitimately have a request in
+        flight on their own event while this runs; borrowing either would let
+        this wait wake on their completion instead of its own.
+        """
         handle, _, _ = self._begin()
         try:
-            buf = ctypes.create_string_buffer(length)
-            buf[0] = bytes([report_id])
-            if not _hid.HidD_GetFeature(handle, buf, length):
-                self.last_error = ("HidD_GetFeature(%#x) failed: Win32 error %d"
-                                   % (report_id, ctypes.get_last_error()))
+            event = _kernel32.CreateEventW(None, True, False, None)
+            if not event:
+                self.last_error = ("CreateEventW failed: Win32 error %d"
+                                   % ctypes.get_last_error())
                 return None
-            return buf.raw[:length]
+            try:
+                buf = ctypes.create_string_buffer(length)
+                buf[0] = bytes([report_id])
+                returned = wintypes.DWORD(0)
+                overlapped = OVERLAPPED()
+                overlapped.hEvent = event
+                # Same buffer in and out, as hidapi does: METHOD_OUT_DIRECT
+                # takes the requested report id from byte 0 and writes the
+                # report back over it.
+                ok = _kernel32.DeviceIoControl(
+                    handle, IOCTL_HID_GET_FEATURE, buf, length, buf, length,
+                    ctypes.byref(returned), ctypes.byref(overlapped))
+                if not ok:
+                    err = ctypes.get_last_error()
+                    if err != ERROR_IO_PENDING:
+                        self.last_error = (
+                            "IOCTL_HID_GET_FEATURE(%#x) failed: Win32 error %d"
+                            % (report_id, err))
+                        return None
+                    if not _kernel32.GetOverlappedResult(
+                            handle, ctypes.byref(overlapped),
+                            ctypes.byref(returned), True):
+                        err = ctypes.get_last_error()
+                        if err == ERROR_IO_INCOMPLETE:
+                            # A blocking GetOverlappedResult should not be able
+                            # to return this. If it ever does, the request still
+                            # owns buf and overlapped and has to be drained.
+                            _cancel_and_drain(handle, overlapped, returned)
+                        self.last_error = (
+                            "feature report %#x did not complete: Win32 error %d"
+                            % (report_id, err))
+                        return None
+                return buf.raw[:length]
+            finally:
+                _kernel32.CloseHandle(event)
         finally:
             self._end()
 
