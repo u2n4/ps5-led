@@ -12,6 +12,21 @@ from . import dualshock4 as ds4
 RESCAN_SECONDS = 2.0
 READ_TIMEOUT_MS = 200
 
+# A connected controller is never quiet: it streams gyro, accel and touch
+# continuously whether or not anyone touches it. The live USB run measured 2,533
+# input reports in 10 s, about 253/s.
+#
+# So silence is a liveness signal, and it is the ONLY one on the path that
+# actually failed on real hardware: unplugging the controller left ReadFile
+# accepting a request that never completed, so every read returned None as a
+# plain timeout, `if not data: continue` spun the loop forever on a dead handle,
+# and _drop() was never reached — the lightbar stopped and only restarting the
+# process brought it back. Windows never reported an error to notice.
+#
+# 15 consecutive 200 ms timeouts is 3 s of silence from a device that should
+# have sent about 750 reports.
+SILENT_READS_BEFORE_DROP = 15
+
 # The colour a freshly opened controller is given when no caller has asked for
 # one yet. It lives here, not in engine.py, because the device layer is the one
 # that needs a colour with no caller present: _connect runs before any Engine
@@ -156,9 +171,34 @@ class DeviceManager(object):
 
     # -- internals ---------------------------------------------------------
     @staticmethod
+    def _ds5_output_length(info):
+        """The DualSense output-report length to BUILD at, never Windows' buffer size.
+
+        Measured on real hardware, all three interfaces present at once:
+            DualSense  USB : in=64  out=48
+            DualSense  BT  : in=78  out=547
+            DualShock4 BT  : in=547 out=547
+
+        OutputReportByteLength is the largest output report the collection
+        declares, not the size of report 0x31. Feeding 547 to build_output
+        raised "Bluetooth reports are 78 bytes, got 547" inside _connect, so the
+        connection never completed and the lightbar was never touched — the
+        whole reason Bluetooth did nothing on real hardware.
+
+        HidDevice.write() pads to OutputReportByteLength itself, which is what
+        Windows requires of the buffer; the report the driver puts on the wire is
+        sized by the descriptor entry for the report id in byte 0.
+        """
+        if info.transport == ds.TRANSPORT_BT:
+            return ds.BT_OUTPUT_SIZE
+        return info.output_length
+
+    @staticmethod
     def _build_packet(info, is_ds5, rgb, seq):
         if is_ds5:
-            return ds.build_output(info.transport, info.output_length, rgb=rgb, seq=seq)
+            return ds.build_output(info.transport,
+                                   DeviceManager._ds5_output_length(info),
+                                   rgb=rgb, seq=seq)
         return ds4.build_output(info.transport, rgb)
 
     def _write_packet(self, device, packet):
@@ -254,7 +294,8 @@ class DeviceManager(object):
                 # One setup packet per connection, or RGB is ignored while the
                 # controller finishes its power-on animation.
                 self._write_packet(device, ds.build_output(
-                    info.transport, info.output_length, lightbar_setup=True, seq=0))
+                    info.transport, self._ds5_output_length(info),
+                    lightbar_setup=True, seq=0))
             # Always follow the setup packet with a colour, and always before
             # publishing self._device.
             #
@@ -323,10 +364,14 @@ class DeviceManager(object):
         return True
 
     def _run(self):
+        silent = 0  # consecutive reads that timed out; see SILENT_READS_BEFORE_DROP
         while not self._stop.is_set():
             with self._lock:
                 device = self._device
             if device is None:
+                # A fresh connection starts its silence budget over; a count
+                # carried from the dead handle would drop a healthy one.
+                silent = 0
                 try:
                     if not self._connect():
                         self._stop.wait(RESCAN_SECONDS)
@@ -354,7 +399,18 @@ class DeviceManager(object):
                 self._stop.wait(RESCAN_SECONDS)
                 continue
             if not data:
+                # See SILENT_READS_BEFORE_DROP: a timeout is not proof of health.
+                silent += 1
+                if silent >= SILENT_READS_BEFORE_DROP:
+                    with self._lock:
+                        self._last_error = (
+                            "no input report for %.1fs - treating the device as gone"
+                            % (silent * READ_TIMEOUT_MS / 1000.0))
+                    silent = 0
+                    self._drop(device)
+                    self._stop.wait(RESCAN_SECONDS)
                 continue
+            silent = 0
             with self._lock:
                 is_ds5, scales = self._is_ds5, self._scales
             if not is_ds5:

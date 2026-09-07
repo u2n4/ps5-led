@@ -49,7 +49,30 @@ IOCTL_HID_GET_FEATURE = 0xB0192
 
 TRANSPORT_USB = "usb"
 TRANSPORT_BT = "bt"
-_TRANSPORT_BY_INPUT_LENGTH = {64: TRANSPORT_USB, 78: TRANSPORT_BT}
+
+# Transport comes from the device interface PATH, not from report sizes.
+#
+# Report length looked like a clean discriminator and is not. Measured on real
+# hardware, all three interfaces present at once:
+#   DualSense  USB : in=64  out=48
+#   DualSense  BT  : in=78  out=547
+#   DualShock4 BT  : in=547 out=547
+# InputReportByteLength is the MAXIMUM across every input report the collection
+# declares, so a Bluetooth collection carrying large reports reports 547 and a
+# {64: usb, 78: bt} table calls it "unknown" — which silently dropped the
+# DualShock 4 over Bluetooth with no message at all.
+#
+# The path carries the bus itself. Windows builds a Bluetooth HID path around
+# the standard HID-over-Bluetooth service UUID 0x1124:
+#   \\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&0ce6#...
+# while a USB HID path carries the usb vid/pid/interface triple:
+#   \\?\hid#vid_054c&pid_0ce6&mi_03#...
+_BT_SERVICE_UUID = "00001124"
+
+
+def transport_for_path(path):
+    """USB or Bluetooth, decided by the interface path rather than report sizes."""
+    return TRANSPORT_BT if _BT_SERVICE_UUID in (path or "").lower() else TRANSPORT_USB
 
 
 class HidError(OSError):
@@ -222,7 +245,7 @@ def _describe(handle, path):
         input_length=caps.InputReportByteLength,
         output_length=caps.OutputReportByteLength,
         feature_length=caps.FeatureReportByteLength,
-        transport=_TRANSPORT_BY_INPUT_LENGTH.get(caps.InputReportByteLength, "unknown"),
+        transport=transport_for_path(path),
     )
 
 
