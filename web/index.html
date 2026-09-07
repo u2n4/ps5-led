@@ -1,3 +1,31 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>PS5 LED</title></head>
-<body><p>PS5 LED bridge is running.</p></body></html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PS5 LED</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<canvas id="particles" aria-hidden="true"></canvas>
+
+<main class="shell">
+  <header class="bar">
+    <h1 id="t-title">PS5 LED</h1>
+    <div class="status">
+      <span id="conn" class="pill">—</span>
+      <span id="batt" class="pill">—</span>
+    </div>
+  </header>
+
+  <section class="stage">
+    <canvas id="scene"></canvas>
+    <p id="scene-fallback" class="fallback" hidden></p>
+  </section>
+
+  <section class="panel" id="controls"></section>
+</main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
