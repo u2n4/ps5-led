@@ -113,29 +113,41 @@ For `pydualsense` to talk to a DualSense, Windows needs the **WinUSB/libusb** dr
 
 ## 🎛️ Usage
 
-Launch the GUI:
+Launch the app (opens the window, with the live 3D view and controls):
 
 ```bash
-python dualled_pro.py
+python -m ps5led
 ```
 
-Run **headless** (no window — uses your last saved settings):
+Check what the app can actually see on the USB/HID bus — the first thing to
+run if a controller isn't responding:
 
 ```bash
-# Drive the lightbar in the background
-python dualled_pro.py --background
+python -m ps5led --doctor
+```
 
-# Auto-stop after 30 minutes, then turn the lightbar off
-python dualled_pro.py --background --stop-after 30 --off-on-exit
+Run **headless** (no window, no browser — drives the lightbar from the last
+saved settings, or the flags below):
+
+```bash
+python -m ps5led --background
+python -m ps5led --background --mode rainbow --speed 2
+python -m ps5led --no-browser --port 8731
 ```
 
 | Flag | Description |
 |---|---|
-| `--background` | Run without the UI, using the last saved color/mode. |
-| `--stop-after N` | Automatically stop after `N` minutes (background mode). |
-| `--off-on-exit` | Turn the lightbar off when exiting. |
+| `--doctor` | Report every Sony HID interface found and why the controller isn't driving, then exit. |
+| `--background` | Run the engine with no window and no browser, using the last saved settings. |
+| `--mode {manual,rainbow,wave,flash,battery}` | Lighting mode to start in (default: manual). |
+| `--color RRGGBB` | Hex colour for the modes that use one, e.g. `00aaff`. |
+| `--speed 0.1-5.0` | Animation speed (default: 1.0). |
+| `--no-browser` | Start the local bridge and keep the engine running without opening a browser window. |
+| `--port N` | Bridge port (default: an ephemeral one). |
 
-Config and logs live in your OS app-data folder (`%APPDATA%\DualLED_Pro` on Windows).
+Mode, colour, speed, brightness, shell colour and language persist between
+runs automatically. Config lives in your OS app-data folder
+(`%APPDATA%\PS5-LED\config.json` on Windows).
 
 ---
 
@@ -265,29 +277,38 @@ python dualled_pro.py
 
 ### 🎛️ الاستخدام
 
-شغّل الواجهة:
+شغّل البرنامج (يفتح النافذة مع العرض ثلاثي الأبعاد الحي وأدوات التحكم):
 
 ```bash
-python dualled_pro.py
+python -m ps5led
 ```
 
-شغّله **بدون واجهة** (يستخدم آخر إعدادات حفظتها):
+شوف وش يقدر البرنامج يشوفه على منفذ USB/HID — أول شي تجرّبه لو اليد ما تستجيب:
 
 ```bash
-# تشغيل الإضاءة بالخلفية
-python dualled_pro.py --background
+python -m ps5led --doctor
+```
 
-# يوقف تلقائياً بعد 30 دقيقة، ويطفّي الإضاءة
-python dualled_pro.py --background --stop-after 30 --off-on-exit
+شغّله **بدون واجهة ولا متصفح** (يشتغل بآخر إعدادات محفوظة، أو بالخيارات تحت):
+
+```bash
+python -m ps5led --background
+python -m ps5led --background --mode rainbow --speed 2
+python -m ps5led --no-browser --port 8731
 ```
 
 | الأمر | الوظيفة |
 |---|---|
-| `--background` | يشتغل بدون واجهة، باستخدام آخر لون/وضع محفوظ. |
-| `--stop-after N` | يوقف تلقائياً بعد `N` دقيقة (وضع الخلفية). |
-| `--off-on-exit` | يطفّي الإضاءة عند الخروج. |
+| `--doctor` | يعرض كل منفذ Sony HID يلقاه وليش اليد ما تشتغل، وينسحب. |
+| `--background` | يشغّل المحرّك بدون نافذة ولا متصفح، بآخر إعدادات محفوظة. |
+| `--mode {manual,rainbow,wave,flash,battery}` | وضع الإضاءة اللي يبدأ فيه (الافتراضي: manual). |
+| `--color RRGGBB` | لون بصيغة hex للأوضاع اللي تحتاج لون، مثل `00aaff`. |
+| `--speed 0.1-5.0` | سرعة الحركة (الافتراضي: 1.0). |
+| `--no-browser` | يشغّل الـ bridge المحلي ويخلّي المحرّك شغّال بدون ما يفتح نافذة متصفح. |
+| `--port N` | منفذ الـ bridge (الافتراضي: منفذ عشوائي مؤقت). |
 
-الإعدادات والسجلات تنحفظ في مجلد بيانات النظام (`%APPDATA%\DualLED_Pro` على ويندوز).
+الوضع واللون والسرعة والسطوع ولون اليد واللغة تنحفظ تلقائياً بين كل تشغيل.
+الإعدادات تنحفظ في مجلد بيانات النظام (`%APPDATA%\PS5-LED\config.json` على ويندوز).
 
 ---
 
