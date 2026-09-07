@@ -77,6 +77,11 @@ class Engine(threading.Thread):
         with self._lock:
             self._settings["colour"] = tuple(rgb)
 
+    # set_setting/set_speed are outside this task's declared Produces
+    # interface and nothing here calls them yet. They stay: a later plan's
+    # bridge contract already specifies set_speed, set_flash and
+    # set_brightness commands, so these are forward-looking surface for that
+    # named consumer, not dead code.
     def set_setting(self, key, value):
         with self._lock:
             self._settings[key] = value
@@ -98,14 +103,27 @@ class Engine(threading.Thread):
                 settings = dict(self._settings)
                 speed = self._speed
             rgb = colour_for(mode, phase, settings)
+            # Publish every tick, unconditionally. AppState.update() already
+            # no-ops per field when nothing changed, so this is cheap and
+            # self-deduping -- and it means a mode switch is observable even
+            # on a tick where the resulting colour happens not to change.
+            self._state.update(rgb=rgb, mode=mode)
             if rgb != self._last_written:
-                self._last_written = rgb
-                self._state.update(rgb=rgb, mode=mode)
                 try:
                     self._write(rgb)
+                    # Only mark it written after the write actually
+                    # succeeds. A failed write must be retried on the next
+                    # tick rather than silently treated as delivered; this
+                    # still costs exactly one write per solid colour, since a
+                    # successful write gates every following identical tick
+                    # the same as before.
+                    self._last_written = rgb
                 except Exception:
                     # A device that vanished is DeviceManager's problem to
                     # notice and recover from; the engine must keep running.
                     pass
+            # One full 0..1 phase cycle takes 2 seconds at speed=1.0 (the 0.5
+            # factor is that half-cycle-per-second base rate); speed scales
+            # it up or down from there.
             phase = (phase + self._interval * speed * 0.5) % 1.0
             self._stop.wait(self._interval)
