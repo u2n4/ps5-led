@@ -7,9 +7,21 @@ import unittest
 import ps5led
 from ps5led import dualsense as ds
 from ps5led import dualshock4 as ds4
-from ps5led.device import DEFAULT_RGB, DeviceManager, choose_device
+from ps5led.device import (
+    BOOT_COLOUR_WRITES,
+    DEFAULT_RGB,
+    DeviceManager,
+    choose_device,
+)
 from ps5led.engine import colour_for
 from ps5led.state import AppState
+
+# A DualSense connect writes one setup packet then repeats the colour across the
+# boot-animation window. Fixtures that queue per-write outcomes must skip these
+# or their indices silently shift the day BOOT_COLOUR_WRITES changes - which is
+# exactly how three tests broke when it went from 1 to 3.
+DS5_CONNECT_WRITES = 1 + BOOT_COLOUR_WRITES
+DS4_CONNECT_WRITES = BOOT_COLOUR_WRITES
 
 
 def calibration_blob(speed=2048, span=16384):
@@ -242,12 +254,37 @@ class TestConnectLightsTheBar(unittest.TestCase):
         device = FakeDevice()
         self._connect_with(device)
 
-        self.assertEqual(len(device.writes), 2)
+        # One setup packet, then the colour repeated across the boot-animation
+        # window. A controller powered on a moment ago ignores RGB until that
+        # animation ends, which is why a single write was not enough: on real
+        # hardware over Bluetooth only the LAST of four colours ever appeared.
+        self.assertEqual(len(device.writes), 1 + BOOT_COLOUR_WRITES)
         self.assertEqual(device.writes[0],
                          ds.build_output("usb", 48, lightbar_setup=True, seq=0))
-        self.assertEqual(device.writes[1],
-                         ds.build_output("usb", 48, rgb=DEFAULT_RGB, seq=1),
-                         "the connect must not end on the light-out packet")
+        for i, packet in enumerate(device.writes[1:], start=1):
+            self.assertEqual(packet, ds.build_output("usb", 48, rgb=DEFAULT_RGB, seq=i),
+                             "colour write %d should carry the default colour" % i)
+
+    def test_every_boot_window_write_carries_a_fresh_sequence_number(self):
+        # Bluetooth only: USB output reports have no sequence byte at all, so
+        # this has to run on a BT interface or it reads valid_flag1 and sees
+        # zeroes. A repeat that reused seq would be discarded by the controller
+        # and the repeats would buy nothing.
+        device = FakeDevice()
+        self._connect_with(device, FakeInfo(0x0CE6, transport="bt",
+                                            input_length=78, output_length=547))
+        seqs = [p[1] >> 4 for p in device.writes[1:]]
+        self.assertEqual(len(seqs), BOOT_COLOUR_WRITES)
+        self.assertEqual(len(set(seqs)), len(seqs), "sequence numbers repeated: %s" % seqs)
+
+    def test_the_boot_window_builds_bluetooth_packets_at_the_protocol_length(self):
+        # The 547 above is what Windows really reports for a DualSense on
+        # Bluetooth; feeding it to build_output is what used to raise.
+        device = FakeDevice()
+        self._connect_with(device, FakeInfo(0x0CE6, transport="bt",
+                                            input_length=78, output_length=547))
+        for packet in device.writes:
+            self.assertEqual(len(packet), ds.BT_OUTPUT_SIZE)
 
     def test_the_default_never_overrides_a_colour_already_asked_for(self):
         device = FakeDevice()
@@ -265,7 +302,9 @@ class TestConnectLightsTheBar(unittest.TestCase):
         device = FakeDevice()
         self._connect_with(device, FakeInfo(0x09CC))
 
-        self.assertEqual(device.writes, [ds4.build_output("usb", DEFAULT_RGB)])
+        self.assertEqual(device.writes,
+                         [ds4.build_output("usb", DEFAULT_RGB)] * BOOT_COLOUR_WRITES,
+                         "a DS4 gets the same boot-window repeats, minus the setup packet")
 
     def test_the_engine_default_matches_the_connect_default(self):
         # If these ever diverged, every connection would light the bar in one
@@ -341,7 +380,8 @@ class TestWriteFailureRecovery(unittest.TestCase):
         # default, since nothing has been asked for yet), then the two
         # write_colour calls below.
         device = FakeDevice(
-            write_errors=[None, None, None, RuntimeError("write timed out")])
+            write_errors=[None] * DS5_CONNECT_WRITES
+            + [None, RuntimeError("write timed out")])
         manager = self._connected_manager(device)
         self.assertTrue(manager.write_colour((1, 2, 3)))
 
@@ -376,8 +416,12 @@ class TestWriteFailureRecovery(unittest.TestCase):
 
         self.assertTrue(manager._connect())
 
-        self.assertEqual(len(device.writes), 2)  # setup packet, then the resend
-        self.assertEqual(device.published_at_write, [False, False])
+        # setup packet, then the colour repeated across the boot window
+        self.assertEqual(len(device.writes), DS5_CONNECT_WRITES)
+        # Every write in _connect, including the boot-window repeats, must
+        # happen while the device is still unpublished - that is what makes
+        # _connect provably the only writer.
+        self.assertEqual(device.published_at_write, [False] * DS5_CONNECT_WRITES)
         self.assertEqual(device.writes[-1], ds.build_output("usb", 48, rgb=(4, 5, 6)))
 
 
@@ -428,7 +472,8 @@ class TestDropIsScopedToOneHandle(unittest.TestCase):
         window, so an unconditional close on the failure path would take down
         the healthy new connection on behalf of a handle that is already gone.
         """
-        device = FakeDevice(write_errors=[None, None, RuntimeError("write timed out")])
+        device = FakeDevice(
+            write_errors=[None] * DS5_CONNECT_WRITES + [RuntimeError("write timed out")])
         install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
         manager = DeviceManager(AppState())
         self.assertTrue(manager._connect())

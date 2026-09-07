@@ -5,6 +5,7 @@ runner is Linux.
 """
 
 import threading
+import time
 
 from . import dualsense as ds
 from . import dualshock4 as ds4
@@ -35,6 +36,23 @@ SILENT_READS_BEFORE_DROP = 15
 # connection would light the bar in one colour and the engine's first tick would
 # immediately change it to another, a visible flash on every reconnect.
 DEFAULT_RGB = (0, 170, 255)
+
+# A controller that has just been powered on runs a boot light animation and
+# ignores RGB until it finishes. Observed on real hardware over Bluetooth: the
+# operator tool wrote red, green, blue and cyan a second apart and only the
+# LAST one appeared - the first three landed during the animation and were
+# discarded in silence.
+#
+# The LIGHTBAR_SETUP_LIGHT_OUT packet ends the animation, but not instantly, so
+# a single colour written straight after it can still be swallowed. Repeating
+# the colour across the window costs three small writes on connect only.
+#
+# These run inside _connect, BEFORE self._device is published, which is what
+# makes them safe: while the device is unpublished write_colour returns early,
+# so this is provably the only writer and no second thread can be inside
+# HidDevice.write() at the same time.
+BOOT_COLOUR_WRITES = 3
+BOOT_COLOUR_INTERVAL = 0.45
 
 
 def choose_device(infos):
@@ -310,9 +328,28 @@ class DeviceManager(object):
                 # then on the reconnect resend is that intent's sole recovery
                 # path, so it has to win over the default.
                 last_rgb = self._last_rgb if self._last_rgb is not None else DEFAULT_RGB
-                self._seq = (self._seq + 1) & 0x0F
-                seq = self._seq
-            self._write_packet(device, self._build_packet(info, is_ds5, last_rgb, seq))
+            # Repeated across the boot-animation window; see BOOT_COLOUR_WRITES.
+            #
+            # Only the FIRST write is required. It is what proves the device
+            # accepts output reports, so its failure still aborts the connect.
+            # The repeats exist solely to outlast the boot animation, and
+            # letting one of them abort a connection that has already written
+            # successfully would give a transient failure three chances to tear
+            # down a healthy device instead of one.
+            for attempt in range(BOOT_COLOUR_WRITES):
+                if attempt and self._stop.wait(BOOT_COLOUR_INTERVAL):
+                    break
+                with self._lock:
+                    self._seq = (self._seq + 1) & 0x0F
+                    seq = self._seq
+                packet = self._build_packet(info, is_ds5, last_rgb, seq)
+                if attempt == 0:
+                    self._write_packet(device, packet)
+                else:
+                    try:
+                        self._write_packet(device, packet)
+                    except Exception:
+                        break
             with self._lock:
                 # Re-checked under the lock, not before it: see stop()'s
                 # docstring for why this ordering is what makes stop() a
