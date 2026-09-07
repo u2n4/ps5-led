@@ -7,9 +7,22 @@ import sys
 import time
 
 from . import __version__
+from . import dualsense as ds
 from .device import DeviceManager
 from .engine import Engine
 from .state import AppState
+
+# How long --doctor gives a connection to either succeed or explain itself.
+# _connect can spend over a second in HidD_GetFeature and another full second
+# in a write timeout on a sleeping Bluetooth controller, and the read that
+# switches Bluetooth into full reports happens in the same pass.
+DOCTOR_TIMEOUT_SECONDS = 6.0
+_DOCTOR_POLL_SECONDS = 0.05
+
+_EXCLUSIVE_HINT = (
+    "  - Another program (Steam, DS4Windows) may hold it exclusively.\n"
+    "    Close it, or turn off its controller support, and run this again."
+)
 
 
 def _require_windows():
@@ -19,18 +32,41 @@ def _require_windows():
     return True
 
 
+def _wait_for_device(manager, timeout=DOCTOR_TIMEOUT_SECONDS):
+    """Poll describe() until the device connects or an error says why it did not.
+
+    A fixed sleep is a race, not a wait. Wait too little on Bluetooth and
+    last_error is still None, so the user reads "connected: false,
+    last_error: null" and learns nothing -- which is the exact silent failure
+    --doctor exists to replace.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        info = manager.describe()
+        if info["connected"] or info["last_error"] or info["last_write_error"]:
+            return info
+        if time.monotonic() >= deadline:
+            return info
+        time.sleep(_DOCTOR_POLL_SECONDS)
+
+
 def doctor():
-    """Print what the app can see. This is what a silent failure looks like now."""
+    """Print what the app can see. This is what a silent failure looks like now.
+
+    Exit code is part of the answer, not decoration: 0 only when the controller
+    was actually opened and driven, so --doctor works as a scripted health
+    check instead of reporting success over a dead device.
+    """
     if not _require_windows():
         return 2
     from .hid_win import enumerate_devices
 
     print("PS5 LED %s" % __version__)
-    devices = enumerate_devices(0x054C)
+    devices = enumerate_devices(ds.VENDOR_ID)
     if not devices:
         print("\nNo Sony HID device found.")
         print("  - Is the controller connected by cable or paired over Bluetooth?")
-        print("  - Another program (Steam, DS4Windows) may hold it exclusively.")
+        print(_EXCLUSIVE_HINT)
         return 1
     print("\nSony HID interfaces:")
     for info in devices:
@@ -38,14 +74,30 @@ def doctor():
               % (info.product, info.product_id, info.input_length,
                  info.output_length, info.feature_length, info.transport))
 
-    state = AppState()
-    manager = DeviceManager(state)
-    manager.start()
-    time.sleep(1.5)
+    manager = DeviceManager(AppState())
+    try:
+        manager.start()
+        view = _wait_for_device(manager)
+    finally:
+        manager.stop()
+
     print("\nengine view:")
-    print(json.dumps(manager.describe(), indent=2, default=str))
-    manager.stop()
-    return 0
+    print(json.dumps(view, indent=2, default=str))
+    if view["connected"]:
+        return 0
+
+    reason = view["last_error"] or view["last_write_error"]
+    print("\nThe interface above was listed but could not be driven.")
+    if reason:
+        print("  reason: %s" % reason)
+        if "cannot open" in reason.lower():
+            print(_EXCLUSIVE_HINT)
+    else:
+        print("  - Nothing failed within %.0f s and nothing connected either:"
+              % DOCTOR_TIMEOUT_SECONDS)
+        print("    the interfaces above are Sony HID endpoints this app does")
+        print("    not drive (unrecognised product id or report size).")
+    return 1
 
 
 def run_background(state=None):
@@ -53,16 +105,19 @@ def run_background(state=None):
         return 2
     state = state or AppState()
     manager = DeviceManager(state)
-    manager.start()
     engine = Engine(state, manager.write_colour)
-    engine.start()
-    print("PS5 LED running. Ctrl+C to stop.")
     try:
+        manager.start()
+        engine.start()
+        print("PS5 LED running. Ctrl+C to stop.")
         while True:
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
+        # Reached however the block above exits, including a failure between
+        # the two start() calls -- otherwise the reader thread outlives the
+        # process's only reference to it and keeps the handle.
         engine.stop()
         manager.stop()
     return 0
