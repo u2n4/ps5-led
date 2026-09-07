@@ -114,10 +114,20 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self):
-        if not self._authorised():
+        path = urllib.parse.urlparse(self.path).path
+        # The token guards /api/, and only /api/. It cannot guard the static
+        # files even in principle: index.html references them relatively, and
+        # an ES module's own imports carry no query string, so a browser asks
+        # for js/scene.js with no token and there is nowhere to put one.
+        # Guarding them meant the page was served its own HTML and then refused
+        # its stylesheet and its entire module graph. The files under web/ are
+        # the app's own open-source assets and hold no secret; the ability to
+        # drive the device is what the token protects, and that is all behind
+        # /api/. Traversal is still blocked in _serve_static, which is now the
+        # only thing standing between an unauthenticated caller and the disk.
+        if path.startswith("/api/") and not self._authorised():
             self._send(403, json.dumps({"error": "forbidden"}))
             return
-        path = urllib.parse.urlparse(self.path).path
         if path == "/api/boot":
             self._send(200, json.dumps(self.bridge.boot_payload()))
             return
