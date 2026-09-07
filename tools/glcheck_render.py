@@ -5,6 +5,11 @@ and a failure there is exactly the case the fallback exists for. So this maps
 the widget, pumps Tk until frames appear, and reads back the framebuffer to
 check the lightbar colour is really on screen.
 """
+import pathlib
+import sys
+
+# Run from tools/; the app lives one level up.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import sys
 import time
 import tkinter as tk
