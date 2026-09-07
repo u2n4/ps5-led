@@ -1850,13 +1850,21 @@ class App(tk.Tk):
                     # The orbit needs the controller itself: the right stick
                     # turns the model, and the gyro does too when it is on.
                     # Same 33 ms tick, so nothing new is polled.
-                    if hasattr(self.ctrl3d, 'update_inputs') and self.b is not None:
+                    # The backend hangs off the engine, not off App. This read
+                    # said self.b, which App does not have, and the except
+                    # below swallowed the AttributeError -- so every part sat
+                    # still and nothing said why. Report the first failure
+                    # instead of hiding it.
+                    backend = getattr(self.engine, 'b', None)
+                    if backend is not None and hasattr(self.ctrl3d, 'update_inputs'):
                         try:
                             self.ctrl3d.update_inputs(
-                                self.b.snapshot(),
+                                backend.snapshot(),
                                 self.bg.frame_data() if hasattr(self, 'bg') else None)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            if not getattr(self, '_inputs_warned', False):
+                                self._inputs_warned = True
+                                print("preview inputs unavailable: %r" % (exc,))
         except Exception: pass
         self.after(400 if hidden else 33, self.sync_preview_tick)
 
