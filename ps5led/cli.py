@@ -9,14 +9,30 @@ import time
 from . import __version__
 from . import dualsense as ds
 from .device import DeviceManager
-from .engine import Engine
+from .engine import MODES, Engine
 from .state import AppState
+
+
+def _parse_colour(text):
+    """Accept 00aaff, #00aaff or 0x00aaff; return an (r, g, b) tuple or None."""
+    if text is None:
+        return None
+    cleaned = text.strip().lstrip("#")
+    if cleaned[:2].lower() == "0x":
+        cleaned = cleaned[2:]
+    if len(cleaned) != 6:
+        raise ValueError("colour must be six hex digits, e.g. 00aaff, not %r" % (text,))
+    try:
+        value = int(cleaned, 16)
+    except ValueError:
+        raise ValueError("colour must be six hex digits, e.g. 00aaff, not %r" % (text,))
+    return ((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF)
 
 # How long --doctor gives a connection to either succeed or explain itself.
 # _connect can spend over a second in HidD_GetFeature and another full second
 # in a write timeout on a sleeping Bluetooth controller, and the read that
 # switches Bluetooth into full reports happens in the same pass.
-DOCTOR_TIMEOUT_SECONDS = 6.0
+DOCTOR_TIMEOUT_SECONDS = 8.0
 _DOCTOR_POLL_SECONDS = 0.05
 
 _EXCLUSIVE_HINT = (
@@ -100,16 +116,20 @@ def doctor():
     return 1
 
 
-def run_background(state=None):
+def run_background(state=None, mode="manual", colour=None, speed=1.0):
     if not _require_windows():
         return 2
     state = state or AppState()
     manager = DeviceManager(state)
     engine = Engine(state, manager.write_colour)
+    engine.set_mode(mode)
+    engine.set_speed(speed)
+    if colour is not None:
+        engine.set_colour(colour)
     try:
         manager.start()
         engine.start()
-        print("PS5 LED running. Ctrl+C to stop.")
+        print("PS5 LED running in %s mode at speed %s. Ctrl+C to stop." % (mode, speed))
         while True:
             time.sleep(0.5)
     except KeyboardInterrupt:
@@ -130,11 +150,22 @@ def main(argv=None):
                         help="report what the app can see, and why it failed")
     parser.add_argument("--background", action="store_true",
                         help="run the engine with no window")
+    parser.add_argument("--mode", default="manual", choices=list(MODES),
+                        help="lighting mode (default: manual)")
+    parser.add_argument("--color", "--colour", dest="colour", default=None,
+                        metavar="RRGGBB",
+                        help="hex colour for the modes that use one, e.g. 00aaff")
+    parser.add_argument("--speed", type=float, default=1.0,
+                        help="animation speed, 0.1 to 5.0 (default: 1.0)")
     args = parser.parse_args(argv)
 
     if args.doctor:
         return doctor()
     if args.background:
-        return run_background()
+        try:
+            colour = _parse_colour(args.colour)
+        except ValueError as exc:
+            parser.error(str(exc))
+        return run_background(mode=args.mode, colour=colour, speed=args.speed)
     parser.print_help()
     return 0
