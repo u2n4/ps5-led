@@ -4,6 +4,11 @@ Wiring set_scene() is not proof. This renders each palette, reads the
 framebuffer back, and checks the picture really changes -- and that it changes
 towards the palette's own shell colour, not just into noise.
 """
+import pathlib
+import sys
+
+# Run from tools/; the app lives one level up.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import sys
 import time
 import tkinter as tk

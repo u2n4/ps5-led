@@ -4,6 +4,11 @@ Run with no argument to test whatever is installed. Run with `--block-gl` to
 simulate the machine this actually ships to, where the two pip packages did
 not land -- the case that used to kill the lightbar after a PowerShell install.
 """
+import pathlib
+import sys
+
+# Run from tools/; the app lives one level up.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import sys
 import tkinter as tk
 

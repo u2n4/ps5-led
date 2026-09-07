@@ -514,8 +514,14 @@ class DeviceManager(object):
                     gyro=tuple(value * scale for value in sample.gyro_raw),
                     accel=tuple(value / 8192.0 for value in sample.accel_raw),
                     sensor_timestamp=sample.timestamp,
+                    left_stick=tuple((value - 128) / (128.0 if value < 128 else 127.0)
+                                     for value in sample.sticks[0:2]),
                     right_stick=tuple((value - 128) / (128.0 if value < 128 else 127.0)
                                       for value in sample.sticks[2:4]),
+                    # Published so the preview can move what the hands move.
+                    # Both were parsed already and thrown away; buttons was
+                    # already going out.
+                    triggers=tuple(value / 255.0 for value in sample.triggers),
                     buttons=sample.buttons,
                     touch=sample.touch,
                 )

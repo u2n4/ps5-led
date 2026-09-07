@@ -125,6 +125,64 @@ class Orbit:
         return self.rotation != before
 
 
+# --- parts that move -------------------------------------------------------
+#
+# Not every moving part is its own mesh. The two analog sticks share one mesh
+# (Object_16) with their trim rings (Object_14, Object_63), and the shoulder
+# block (Object_59) holds both triggers. Those four are split on the sign of
+# each triangle's average X. The face buttons and the D-pad are already
+# separate meshes.
+SPLIT_MESHES = {"Object_16": ("stick_left", "stick_right"),
+                "Object_14": ("stick_left", "stick_right"),
+                "Object_63": ("stick_left", "stick_right"),
+                "Object_59": ("trigger_left", "trigger_right")}
+FACE_BUTTONS = {"Object_68": "square", "Object_72": "circle",
+                "Object_66": "triangle", "Object_70": "cross"}
+DPAD_MESHES = {"Object_55", "Object_57"}
+
+# Bit positions in the DualSense button word, per the Linux kernel's
+# hid-playstation.c. The low nibble is a hat, not four flags: 8 means centred.
+BUTTON_BITS = {"square": 4, "cross": 5, "circle": 6, "triangle": 7}
+HAT_VECTORS = {0: (0, 1), 1: (1, 1), 2: (1, 0), 3: (1, -1),
+               4: (0, -1), 5: (-1, -1), 6: (-1, 0), 7: (-1, 1)}
+
+# How far each part travels. Chosen to read clearly at this model scale without
+# any part leaving its recess.
+# Measured on this controller over 127 samples, hands off: the left stick rests
+# within 0.024 but the right one drifts to 0.109. A threshold under that leaves
+# the right stick permanently tilted on screen. Orbit.deadzone already sits at
+# 0.18 for the same reason, which is why the model never drifts on its own.
+STICK_DEADZONE = 0.16
+STICK_TILT_DEG = 14.0
+TRIGGER_TILT_DEG = 11.0
+BUTTON_TRAVEL = 0.018
+DPAD_TILT_DEG = 6.0
+
+
+def split_side(mesh):
+    """Left and right index lists for a mesh holding both sides.
+
+    Split per TRIANGLE, on the average X of its three corners, so no triangle
+    is ever torn between the two halves.
+    """
+    verts, indices = mesh["vertices"], mesh["indices"]
+    left, right = [], []
+    for i in range(0, len(indices), 3):
+        a, b, c = indices[i], indices[i+1], indices[i+2]
+        mid = (verts[3*a] + verts[3*b] + verts[3*c]) / 3.0
+        (left if mid < 0 else right).extend((a, b, c))
+    return left, right
+
+
+def centroid(mesh, indices):
+    verts = mesh["vertices"]
+    seen = set(indices)
+    if not seen:
+        return (0.0, 0.0, 0.0)
+    n = len(seen)
+    return tuple(sum(verts[3*i + axis] for i in seen) / n for axis in range(3))
+
+
 def load_mesh(path):
     with gzip.open(path, "rt", encoding="utf-8") as stream:
         model = json.load(stream)
@@ -163,6 +221,7 @@ class ControllerGL(OpenGLFrame):
         self.frame_count = 0
         self.renderer_info = {}
         self.background = None
+        self.inputs = {}
         self._background_revision = None
         self._bg = (11/255, 15/255, 20/255)
         super().__init__(master, **kwargs)
@@ -264,10 +323,21 @@ class ControllerGL(OpenGLFrame):
             # ctypes arrays retain storage and avoid a NumPy runtime dependency.
             vertices = (ctypes.c_float * len(mesh["vertices"]))(*mesh["vertices"])
             normals = (ctypes.c_float * len(mesh["normals"]))(*mesh["normals"])
-            indices = (ctypes.c_uint * len(mesh["indices"]))(*mesh["indices"])
             uv = mesh.get("uvs", [])
             uvs = (ctypes.c_float * len(uv))(*uv) if uv else None
-            self.meshes.append((mesh, vertices, normals, indices, uvs))
+            # A mesh holding both sides becomes two entries; everything else
+            # stays one. Only entries with a part name are ever transformed.
+            if mesh["name"] in SPLIT_MESHES:
+                left_name, right_name = SPLIT_MESHES[mesh["name"]]
+                halves = zip((left_name, right_name), split_side(mesh))
+            else:
+                halves = ((self._part_name(mesh), mesh["indices"]),)
+            for part, index_list in halves:
+                if not index_list:
+                    continue
+                indices = (ctypes.c_uint * len(index_list))(*index_list)
+                self.meshes.append((mesh, vertices, normals, indices, uvs,
+                                    part, centroid(mesh, index_list)))
         # Release decoded JSON arrays once the render buffers own them.
         self.model = {"bounds": self.model.get("bounds")}
 
@@ -339,7 +409,8 @@ class ControllerGL(OpenGLFrame):
         GL.glMultMatrixf(rotation_matrix(self.orbit.rotation))
         GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
         GL.glEnableClientState(GL.GL_NORMAL_ARRAY)
-        for mesh, vertices, normals, indices, uvs in self.meshes:
+        for mesh, vertices, normals, indices, uvs, part, pivot in self.meshes:
+            moved = self._push_part(part, pivot)
             lightbar = mesh["name"] in ("Object_18", "Object_47")
             if lightbar:
                 GL.glDisable(GL.GL_LIGHTING)
@@ -361,10 +432,81 @@ class ControllerGL(OpenGLFrame):
             GL.glNormalPointer(GL.GL_FLOAT, 0, normals)
             GL.glDrawElements(GL.GL_TRIANGLES, len(indices), GL.GL_UNSIGNED_INT, indices)
             GL.glDisableClientState(GL.GL_TEXTURE_COORD_ARRAY)
+            if moved:
+                GL.glPopMatrix()
         GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
         GL.glDisableClientState(GL.GL_NORMAL_ARRAY)
         GL.glDisable(GL.GL_TEXTURE_2D)
         GL.glDisable(GL.GL_LIGHTING)
+
+    def _part_name(self, mesh):
+        """The moving part a whole mesh belongs to, or None if it never moves."""
+        name = mesh["name"]
+        if name in FACE_BUTTONS:
+            return FACE_BUTTONS[name]
+        if name in DPAD_MESHES:
+            return "dpad"
+        # The D-pad's glyphs and insets are separate meshes with generic slots;
+        # they are the only glyph/inset geometry on the far left, so position
+        # identifies them without hard-coding eleven more object names.
+        if mesh["slot"] in ("glyph", "inset"):
+            xs = mesh["vertices"][0::3]
+            if xs and sum(xs)/len(xs) < -0.40:
+                return "dpad"
+        return None
+
+    def _push_part(self, part, pivot):
+        """Apply this part's transform. True if a matrix was pushed."""
+        if not part:
+            return False
+        state = self.inputs.get(part)
+        if not state:
+            return False
+        px, py, pz = pivot
+        GL.glPushMatrix()
+        GL.glTranslatef(px, py, pz)
+        if part.startswith("stick_"):
+            x, y = state
+            GL.glRotatef(y*STICK_TILT_DEG, 1, 0, 0)
+            GL.glRotatef(x*STICK_TILT_DEG, 0, 1, 0)
+        elif part.startswith("trigger_"):
+            GL.glRotatef(-state*TRIGGER_TILT_DEG, 1, 0, 0)
+        elif part == "dpad":
+            x, y = state
+            GL.glRotatef(-y*DPAD_TILT_DEG, 1, 0, 0)
+            GL.glRotatef(x*DPAD_TILT_DEG, 0, 1, 0)
+        else:
+            GL.glTranslatef(0, 0, -BUTTON_TRAVEL)
+        GL.glTranslatef(-px, -py, -pz)
+        return True
+
+    @staticmethod
+    def read_inputs(sample):
+        """Map one controller sample onto the parts that move.
+
+        Absent keys mean an older state dict, or no controller: everything
+        rests. A part missing from this dict is simply never transformed.
+        """
+        if not sample.get("connected"):
+            return {}
+        out = {}
+        for part, key in (("stick_left", "left_stick"), ("stick_right", "right_stick")):
+            x, y = sample.get(key) or (0.0, 0.0)
+            if abs(x) > STICK_DEADZONE or abs(y) > STICK_DEADZONE:
+                out[part] = (x, y)
+        left, right = sample.get("triggers") or (0.0, 0.0)
+        if left > 0.02:
+            out["trigger_left"] = left
+        if right > 0.02:
+            out["trigger_right"] = right
+        buttons = sample.get("buttons") or 0
+        for name, bit in BUTTON_BITS.items():
+            if buttons & (1 << bit):
+                out[name] = True
+        hat = buttons & 0x0F
+        if hat in HAT_VECTORS:
+            out["dpad"] = HAT_VECTORS[hat]
+        return out
 
     def set_scene(self, palette, led):
         if palette != self.palette or tuple(led) != self.led:
@@ -373,6 +515,10 @@ class ControllerGL(OpenGLFrame):
 
     def update_inputs(self, sample, background=None):
         changed = self.orbit.update(sample)
+        inputs = self.read_inputs(sample)
+        if inputs != self.inputs:
+            self.inputs = inputs
+            changed = True
         if background is not None:
             revision = background["revision"]
             changed = changed or revision != self._background_revision

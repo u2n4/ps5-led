@@ -323,7 +323,9 @@ class Backend:
         self._state = dict(connected=False, product=None, product_id=None,
                            transport=None, battery=None, charging=False,
                            gyro=None, accel=None, sensor_timestamp=None,
-                           right_stick=(0.0, 0.0), applied_rgb=None, applied_at=None)
+                           left_stick=(0.0, 0.0), right_stick=(0.0, 0.0),
+                           triggers=(0.0, 0.0), buttons=0,
+                           applied_rgb=None, applied_at=None)
         self._manager = DeviceManager(self)
         # Seed the boot/reconnect writes before the asynchronous reader starts.
         self.set_color(*hex_to_rgb(CFG.get("color", "#00aaff")))
