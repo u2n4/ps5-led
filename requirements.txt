@@ -1,12 +1,6 @@
 # DualLED Pro — runtime dependencies
-# Python 3.8+. The UI uses Tkinter, which ships with most Python installs
-# (on Debian/Ubuntu: `sudo apt install python3-tk`).
-
-# PS4 / generic HID controller access (DualShock 4)
-hidapi>=0.12.0
-
-# PS5 DualSense access (primary)
-pydualsense>=0.6.0
-
-# PS5 DualSense access (alternative backend, optional — auto-detected if present)
-# dualsense-controller>=1.0.0
+#
+# None. The app has zero third-party runtime dependencies — it needs only
+# Python 3.8+. Controller I/O talks to the native Windows HID stack directly
+# via ctypes (see ps5led/hid_win.py); the browser-based UI is plain ES
+# modules and vendored three.js, with no bundler and no build step.
