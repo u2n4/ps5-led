@@ -60,7 +60,7 @@ spike scripts were discarded; the facts are kept.
 | Claim | Result |
 |---|---|
 | ctypes over `setupapi` + `hid.dll` finds the controller | `DualSense Wireless Controller`, VID `054c`, PID `0ce6` |
-| Transport is derivable from `HidP_GetCaps` | `InputReportByteLength=64` → USB; 78 → Bluetooth |
+| `HidP_GetCaps` reports a usable `InputReportByteLength` | `64` on the USB DualSense |
 | Gyro calibration is readable via feature report `0x05` | scale `0.061 °/s` per LSB (≈ 1/16.4) |
 | Input report offsets are right | `\|accel\|/8192 = 0.992 g` — gravity vector lands where it should |
 | Battery is at struct offset 52 | byte `0x2a` → 100 %, charging |
@@ -73,6 +73,26 @@ spike scripts were discarded; the facts are kept.
 Not yet verified live: **Bluetooth**. The controller was on USB throughout. The
 Bluetooth path is specified from the Linux `hid-playstation` driver and must be
 tested on real hardware before release (§12).
+
+**Inferred, not observed — the transport map.** `hid_win._TRANSPORT_BY_INPUT_LENGTH`
+maps `InputReportByteLength` 64 → `usb` and 78 → `bt`. Only the 64 was measured,
+on the USB DualSense above. The 78 is deduced from the DualSense's Bluetooth
+input report size in `hid-playstation`, and it gates the whole untested
+Bluetooth path: `device.choose_device` skips any interface whose transport is
+neither `usb` nor `bt`, so a pad reporting some third length is not
+mis-driven — it is not driven at all.
+
+Two reasons to keep the "inferred" label until someone measures it:
+`InputReportByteLength` is the **maximum** over every input report in the
+collection, not the size of the one report we parse; and the DualShock 4's
+Bluetooth descriptor declares large audio reports, which is why DS4Windows pins
+the DS4 Bluetooth input report at **547**, not 78. The DS4 over Bluetooth is
+therefore the likeliest of the four combinations to land on `unknown`.
+
+That outcome is the design working, not a defect: `--doctor` lists every Sony
+interface it found with its `transport=` value, then says the interface was
+listed but could not be driven. The number needed to add a mapping is printed
+on the line above the failure.
 
 ### 3.1 Live proof — `tools/live_check.py` (2026-09-07)
 
@@ -100,9 +120,13 @@ batt 100% state 2  gyro   ...  deg/s   (streamed continuously, gyro settling nea
 ```
 
 All four `dev.write()` calls returned success with zero `HidError`s. Every RGB
-byte landed at the offset §7.1 specifies (`report[44..46]` after the USB common
-offset of 1). Calibration returned three scales at ≈0.0610 (matching §3's
-`0.061°/s` claim to four significant figures). The same handle then received
+byte landed where §7.1 says it should: **absolute indices 45, 46, 47** of the
+48-byte USB report — §7.1's `44–46` are offsets *within* the common block, and
+the block starts at index 1 over USB. The hex above confirms it, with each
+colour occupying the final three bytes (`…ff0000`, `…00ff00`, `…0000ff`,
+`…00aaff`). Calibration returned three scales of 0.0610, 0.0610 and 0.0609,
+consistent with §3's `0.061 °/s` — §3 states two significant figures, so that is
+the precision the agreement can be claimed at, not four. The same handle then received
 continuous full 64-byte input reports (not the reduced report) with battery
 100% and gyro values that tracked near zero while the controller sat still —
 proof of live bidirectional USB HID communication, not just an accepted write.

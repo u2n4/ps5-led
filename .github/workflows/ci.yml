@@ -11,11 +11,21 @@ permissions:
 
 jobs:
   build:
-    name: Lint & compile (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # The job lints, compiles AND runs the suite; "Lint & compile" undersold it.
+    name: Lint, compile & test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # windows-latest is not decoration. Thirteen tests are
+        # skipUnless(Windows) -- all of TestCloseSynchronization (6), all of
+        # TestGetFeatureIsOverlapped (6), and the hid_win import probe -- so on
+        # a Linux-only matrix the ~500 lines of ctypes in ps5led/hid_win.py,
+        # including the close protocol and the feature read that three
+        # Criticals were fixed in, were covered by nothing but compileall and
+        # ruff's undefined-name pass. Those tests fake every Win32 entry point
+        # and create no kernel objects, so they need no controller attached.
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.8", "3.10", "3.12"]
 
     steps:
@@ -30,13 +40,19 @@ jobs:
         run: python -m pip install --upgrade pip ruff
 
       - name: Syntax check (compile all sources)
-        run: python -m compileall -q ps5led tests
+        # tools/ too: live_check.py is the operator's hardware check and the
+        # only thing that ever compiled it was an operator running it.
+        run: python -m compileall -q ps5led tests tools
 
-      - name: Lint with ruff
-        # Non-blocking style report; fails only on real syntax/undefined-name errors.
-        run: |
-          ruff check --select=E9,F63,F7,F82 --output-format=full .
-          ruff check --exit-zero --statistics .
+      # Two steps rather than one two-line script: on the Windows runner the
+      # default shell is pwsh, which does not abort a script when a native
+      # command exits non-zero, so the blocking check below would have been
+      # masked by the advisory one that followed it.
+      - name: Lint with ruff (blocking - syntax and undefined names)
+        run: ruff check --select=E9,F63,F7,F82 --output-format=full .
+
+      - name: Lint with ruff (advisory style report)
+        run: ruff check --exit-zero --statistics .
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
