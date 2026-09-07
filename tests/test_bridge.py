@@ -291,6 +291,40 @@ class TestProfiles(CommandCase):
         self.run_cmd(cmd="profile_save", name="night")
         json.dumps(self.config.snapshot())
 
+    def test_a_stale_mode_reports_failure_not_silent_success(self):
+        # A profile saved while "disco" was a real mode (or hand-edited on
+        # disk) must not report success once the mode no longer exists --
+        # loading it changes nothing, and the caller deserves to know that.
+        self.run_cmd(cmd="set_mode", mode="wave")
+        self.run_cmd(cmd="profile_save", name="stale")
+        profiles = self.config.get("profiles")
+        profiles["stale"]["mode"] = "disco"
+        self.config.set("profiles", profiles)
+
+        result = self.run_cmd(cmd="profile_load", name="stale")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("mode", result["error"])
+
+    def test_a_stale_colour_reports_failure_alongside_a_stale_mode(self):
+        self.run_cmd(cmd="profile_save", name="stale")
+        profiles = self.config.get("profiles")
+        profiles["stale"]["mode"] = "disco"
+        profiles["stale"]["colour"] = "mauve"
+        self.config.set("profiles", profiles)
+
+        result = self.run_cmd(cmd="profile_load", name="stale")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("mode", result["error"])
+        self.assertIn("colour", result["error"])
+
+    def test_a_fully_valid_profile_still_reports_success(self):
+        self.run_cmd(cmd="set_mode", mode="wave")
+        self.run_cmd(cmd="profile_save", name="good")
+        result = self.run_cmd(cmd="profile_load", name="good")
+        self.assertTrue(result["ok"])
+
 
 class TestOffAndVisible(CommandCase):
     def test_off_sets_black_without_changing_the_saved_colour(self):
