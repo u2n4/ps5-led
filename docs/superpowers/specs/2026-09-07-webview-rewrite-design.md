@@ -74,6 +74,58 @@ Not yet verified live: **Bluetooth**. The controller was on USB throughout. The
 Bluetooth path is specified from the Linux `hid-playstation` driver and must be
 tested on real hardware before release (§12).
 
+### 3.1 Live proof — `tools/live_check.py` (2026-09-07)
+
+Task 6 wrote an operator tool that drives the real HID stack end to end
+(`enumerate_devices` → `HidDevice.open` → `get_feature`/`write`/`read` →
+`dualsense.build_output`/`parse_input`/`parse_calibration`) and ran it against
+a real DualSense.
+
+**USB — run, verified:**
+
+```
+Sony HID interfaces present:
+  DualSense Wireless Controller  pid=0x0ce6  in=64 out=48 feat=64  transport=usb
+
+using DualSense Wireless Controller over usb
+
+calibration: scales (0.06101350206203039, 0.060982495765104464, 0.06092401421560332)
+wrote red       (255, 0, 0)  (48 bytes: 020004...ff0000)
+wrote green     (0, 255, 0)  (48 bytes: 020004...00ff00)
+wrote blue      (0, 0, 255)  (48 bytes: 020004...0000ff)
+wrote restored  (0, 170, 255)  (48 bytes: 020004...00aaff)
+
+watching for 10 s -- move the controller
+batt 100% state 2  gyro   ...  deg/s   (streamed continuously, gyro settling near 0 at rest)
+```
+
+All four `dev.write()` calls returned success with zero `HidError`s. Every RGB
+byte landed at the offset §7.1 specifies (`report[44..46]` after the USB common
+offset of 1). Calibration returned three scales at ≈0.0610 (matching §3's
+`0.061°/s` claim to four significant figures). The same handle then received
+continuous full 64-byte input reports (not the reduced report) with battery
+100% and gyro values that tracked near zero while the controller sat still —
+proof of live bidirectional USB HID communication, not just an accepted write.
+
+Caveat honestly noted: the process running this check has no camera and cannot
+itself see the physical lightbar. The evidence above (byte-correct writes
+accepted with no I/O error, plus live sensor read-back over the same open
+handle) is the strongest verification available without a human eyewitness;
+the operator should confirm the visible red → green → blue → cyan cycle by eye
+on the next run.
+
+**Bluetooth — not run.** This requires unplugging the USB cable and re-pairing
+the controller over Bluetooth by hand, a physical step no automated agent can
+perform. `tools/live_check.py` handles both transports (`info.transport` from
+`HidP_GetCaps`, `BT_OUTPUT_SIZE`/`BT_INPUT_SIZE` branches, CRC32 append/check),
+but the Bluetooth path remains unverified live and must be run by a person
+before it can be marked passed, per §12.
+
+**DualShock 4 — not run**, no DS4 unit was on hand. `dualshock4.build_output`
+was exercised standalone for both transports (`usb` → 32 bytes, `bt` → 78
+bytes, correct report IDs and CRC) to confirm the call `tools/live_check.py`
+makes is syntactically correct; it was never written to a real DS4.
+
 ---
 
 ## 4. File layout
