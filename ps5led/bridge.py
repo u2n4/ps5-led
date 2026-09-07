@@ -15,6 +15,7 @@ import pathlib
 import posixpath
 import secrets
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -117,6 +118,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/boot":
             self._send(200, json.dumps(self.bridge.boot_payload()))
             return
+        if path == "/api/stream":
+            self._stream()
+            return
         self._serve_static(path)
 
     def do_POST(self):
@@ -154,8 +158,52 @@ class _Handler(BaseHTTPRequestHandler):
             guessed += "; charset=utf-8"
         self._send(200, target.read_bytes(), guessed)
 
+    def _stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        # Without this a proxy or the browser may buffer the stream into
+        # uselessness; there is no proxy here, but the header costs nothing and
+        # documents the intent.
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        bridge = self.bridge
+        state = bridge.state
+        last_state = 0.0
+        last_sensor = 0.0
+        try:
+            while bridge.running:
+                now = time.monotonic()
+                snapshot = state.snapshot()
+                state_period = 1.0 / (bridge.STATE_HZ if bridge.page_visible
+                                      else bridge.IDLE_HZ)
+                if now - last_state >= state_period:
+                    self._emit("state", bridge.state_payload(snapshot))
+                    last_state = now
+                if bridge.page_visible and now - last_sensor >= 1.0 / bridge.SENSOR_HZ:
+                    self._emit("sensor", bridge.sensor_payload(snapshot))
+                    last_sensor = now
+                time.sleep(1.0 / (bridge.SENSOR_HZ * 2) if bridge.page_visible else 0.25)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
+            # The page navigated away or the window closed. Normal, not an error.
+            pass
+
+    def _emit(self, name, payload):
+        body = "event: %s\ndata: %s\n\n" % (name, json.dumps(payload))
+        self.wfile.write(body.encode("utf-8"))
+        self.wfile.flush()
+
 
 class Bridge(object):
+    STATE_FIELDS = ("connected", "transport", "product", "rgb", "mode",
+                    "battery", "charging", "gyro_scale")
+    SENSOR_FIELDS = ("gyro", "accel", "sensor_timestamp", "buttons", "touch")
+    STATE_HZ = 30
+    SENSOR_HZ = 60
+    IDLE_HZ = 2
+
     def __init__(self, state, config, manager=None, engine=None,
                  host="127.0.0.1", port=0):
         self._state = state
@@ -166,6 +214,7 @@ class Bridge(object):
         self._requested_port = port
         self.token = secrets.token_urlsafe(TOKEN_BYTES)
         self.page_visible = True
+        self.running = False
         self._server = None
         self._thread = None
 
@@ -176,6 +225,26 @@ class Bridge(object):
     @property
     def url(self):
         return "http://127.0.0.1:%d/?t=%s" % (self.port, self.token)
+
+    @property
+    def state(self):
+        return self._state
+
+    @staticmethod
+    def _jsonable(value):
+        # touch is a tuple of (x, y) tuples and Nones; json handles tuples, but
+        # normalising to lists keeps the wire shape stable for the page.
+        if isinstance(value, tuple):
+            return [Bridge._jsonable(item) for item in value]
+        return value
+
+    def state_payload(self, snapshot):
+        return {key: self._jsonable(snapshot.get(key))
+                for key in self.STATE_FIELDS if key in snapshot}
+
+    def sensor_payload(self, snapshot):
+        return {key: self._jsonable(snapshot.get(key))
+                for key in self.SENSOR_FIELDS if key in snapshot}
 
     def boot_payload(self):
         device = self._manager.describe() if self._manager is not None else {}
@@ -299,6 +368,7 @@ class Bridge(object):
         return {"ok": True, "visible": self.page_visible}
 
     def start(self):
+        self.running = True
         self._server = ThreadingHTTPServer((self._host, self._requested_port), _Handler)
         self._server.daemon_threads = True
         self._server.bridge = self
@@ -307,6 +377,7 @@ class Bridge(object):
         self._thread.start()
 
     def stop(self):
+        self.running = False
         if self._server is None:
             return
         server, self._server = self._server, None

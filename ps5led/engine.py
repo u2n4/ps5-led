@@ -112,13 +112,16 @@ class Engine(threading.Thread):
                 mode = self._mode
                 settings = dict(self._settings)
                 speed = self._speed
-            # The live level overrides whatever set_setting("battery") holds.
+            # AppState is the normal source, but an explicit set_setting must
+            # win: overwriting unconditionally made that setter silently inert.
             # DeviceManager publishes battery into AppState from each input
-            # report; that is the only source there is, and without this line
-            # "battery" mode had no way to see it -- MODES advertised the mode,
-            # colour_for implemented it, and the wire between them was missing,
-            # so it rendered as plain manual on every real run.
-            settings["battery"] = battery
+            # report; that is the only source there is when nothing has been
+            # set explicitly, and without this line "battery" mode had no way
+            # to see it -- MODES advertised the mode, colour_for implemented
+            # it, and the wire between them was missing, so it rendered as
+            # plain manual on every real run.
+            if settings.get("battery") is None:
+                settings["battery"] = battery
             rgb = colour_for(mode, phase, settings)
             # Publish every tick, unconditionally. AppState.update() already
             # no-ops per field when nothing changed, so this is cheap and

@@ -1,4 +1,6 @@
+import http.client
 import json
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -333,6 +335,105 @@ class TestCommandOverHttp(BridgeCase):
         except urllib.error.HTTPError as exc:
             status = exc.code
         self.assertEqual(status, 400)
+
+
+def open_stream(host_port, token, timeout=5):
+    """Returns the raw HTTPResponse for /api/stream so a test can read events."""
+    conn = http.client.HTTPConnection(host_port, timeout=timeout)
+    conn.request("GET", "/api/stream?t=" + token, headers={"Host": host_port})
+    return conn, conn.getresponse()
+
+
+def read_event(response, deadline):
+    """One SSE event as (name, data-dict), or None if the deadline passes."""
+    name, data = None, []
+    while time.time() < deadline:
+        line = response.fp.readline()
+        if not line:
+            return None
+        line = line.decode("utf-8", "replace").rstrip("\n").rstrip("\r")
+        if line.startswith("event:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data.append(line.split(":", 1)[1].strip())
+        elif line == "" and name:
+            return name, json.loads("".join(data))
+    return None
+
+
+class TestStream(BridgeCase):
+    def test_the_stream_needs_the_token(self):
+        conn = http.client.HTTPConnection("127.0.0.1:%d" % self.bridge.port, timeout=5)
+        conn.request("GET", "/api/stream")
+        self.assertEqual(conn.getresponse().status, 403)
+        conn.close()
+
+    def test_content_type_is_event_stream(self):
+        conn, response = open_stream("127.0.0.1:%d" % self.bridge.port, self.token)
+        self.addCleanup(conn.close)
+        self.assertEqual(response.status, 200)
+        self.assertIn("text/event-stream", response.getheader("Content-Type"))
+
+    def test_a_state_event_arrives_and_carries_the_expected_fields(self):
+        self.state.update(rgb=(1, 2, 3), mode="wave", battery=55, connected=True)
+        conn, response = open_stream("127.0.0.1:%d" % self.bridge.port, self.token)
+        self.addCleanup(conn.close)
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            event = read_event(response, deadline)
+            self.assertIsNotNone(event, "no event arrived")
+            if event[0] == "state":
+                for key in ("rgb", "mode", "battery", "connected"):
+                    self.assertIn(key, event[1])
+                return
+        self.fail("no state event in 5s")
+
+    def test_a_sensor_event_arrives_while_visible(self):
+        self.state.update(gyro=(1.0, 2.0, 3.0), accel=(0.0, 1.0, 0.0), buttons=0)
+        conn, response = open_stream("127.0.0.1:%d" % self.bridge.port, self.token)
+        self.addCleanup(conn.close)
+        deadline = time.time() + 5
+        seen = set()
+        while time.time() < deadline and "sensor" not in seen:
+            event = read_event(response, deadline)
+            if event is None:
+                break
+            seen.add(event[0])
+        self.assertIn("sensor", seen)
+
+    def test_no_sensor_events_once_the_page_reports_hidden(self):
+        self.bridge.handle_command({"cmd": "visible", "visible": False})
+        conn, response = open_stream("127.0.0.1:%d" % self.bridge.port, self.token)
+        self.addCleanup(conn.close)
+        deadline = time.time() + 3
+        seen = set()
+        while time.time() < deadline:
+            event = read_event(response, deadline)
+            if event is None:
+                break
+            seen.add(event[0])
+            self.state.update(gyro=(time.time(), 0.0, 0.0))
+        self.assertNotIn("sensor", seen, "sensor events kept flowing while hidden")
+
+    def test_every_streamed_payload_is_json_serialisable(self):
+        # touch is a tuple of tuples-or-None; a naive serialiser breaks on it.
+        self.state.update(touch=((1, 2), None), gyro=(0.1, 0.2, 0.3))
+        json.dumps(self.bridge.sensor_payload(self.state.snapshot()))
+        json.dumps(self.bridge.state_payload(self.state.snapshot()))
+
+    def test_state_payload_only_carries_state_fields(self):
+        payload = self.bridge.state_payload(
+            {"rgb": (1, 2, 3), "gyro": (1.0, 2.0, 3.0), "seq": 4})
+        self.assertIn("rgb", payload)
+        self.assertNotIn("gyro", payload, "sensor data must not ride the state event")
+
+    def test_a_disconnecting_client_does_not_kill_the_server(self):
+        conn, response = open_stream("127.0.0.1:%d" % self.bridge.port, self.token)
+        read_event(response, time.time() + 5)
+        conn.close()
+        time.sleep(0.3)
+        status, _ = get(self.base + "/api/boot?t=" + self.token)
+        self.assertEqual(status, 200, "the server died with its client")
 
 
 if __name__ == "__main__":

@@ -312,5 +312,33 @@ class TestEngineAgainstTheRealWriter(unittest.TestCase):
         self.assertNotEqual(manager._last_rgb, DEFAULT_RGB)
 
 
+class TestBatteryOverride(unittest.TestCase):
+    """AppState is the normal source, but an explicit set_setting must win --
+    it was overwritten unconditionally, so the setter was silently inert."""
+
+    def test_appstate_supplies_battery_when_nothing_was_set(self):
+        state = AppState()
+        state.update(battery=100)
+        engine = Engine(state, lambda rgb: True, interval=0.005)
+        engine.set_mode("battery")
+        engine.start()
+        time.sleep(0.1)
+        engine.stop()
+        r, g, b = state.snapshot()["rgb"]
+        self.assertGreater(g, 200)
+
+    def test_an_explicit_override_is_not_erased_by_appstate(self):
+        state = AppState()
+        state.update(battery=100)
+        engine = Engine(state, lambda rgb: True, interval=0.005)
+        engine.set_mode("battery")
+        engine.set_setting("battery", 0)
+        engine.start()
+        time.sleep(0.1)
+        engine.stop()
+        r, g, b = state.snapshot()["rgb"]
+        self.assertGreater(r, 200, "the explicit override was overwritten")
+
+
 if __name__ == "__main__":
     unittest.main()
