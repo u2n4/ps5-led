@@ -30,10 +30,13 @@ jobs:
         run: python -m pip install --upgrade pip ruff
 
       - name: Syntax check (compile all sources)
-        run: python -m compileall -q dualled_pro.py
+        run: python -m compileall -q ps5led tests
 
       - name: Lint with ruff
         # Non-blocking style report; fails only on real syntax/undefined-name errors.
         run: |
           ruff check --select=E9,F63,F7,F82 --output-format=full .
           ruff check --exit-zero --statistics .
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
