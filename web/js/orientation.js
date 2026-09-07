@@ -11,12 +11,26 @@ const ALPHA = 0.98;          // trust the gyro this much per correction step
 const STALE_MS = 250;        // no sample for this long -> ease back to front
 const MAX_DT = 0.1;          // a longer gap is a stall, not a rotation
 
-// Provisional. The kernel's axis order is known (gyro X = pitch, Y = yaw,
-// Z = roll) but the sign of each axis - which way the model should turn for
-// a positive reading - depends on how the GLB was authored, and nothing
-// short of looking at the live model settles that. Set by observation:
-// tilt nose-down and the model must tilt nose-down, roll right and the
-// model must roll right; negate whichever component goes the wrong way.
+// Measured, not assumed. On the real controller - flat on a desk, face up,
+// stationary - the accelerometer reads [0.001, 0.962, 0.152]: gravity sits on
+// the device's Y. The filter below treats Z as the axis that points up at
+// rest (roll = atan2(ay, az)), so it read 81 degrees of roll off a controller
+// that was not moving, and the model hung at that angle on screen.
+//
+// Swapping two axes is a permutation, so no value of AXIS_SIGN could have
+// fixed it. AXIS_ORDER[i] is the device axis feeding filter axis i. With Y
+// and Z swapped the same reading gives pitch 0.06 and roll 8.98 degrees, and
+// a DualSense does lean back about that much on its curved grips - the
+// residual is the desk, not the filter.
+//
+// The gyro gets the same permutation: both sensors are in one IMU package and
+// must arrive in the same frame, or the complementary blend fights itself.
+//
+// The SIGNS are still provisional - which way the model turns for a positive
+// reading depends on how the GLB was authored, and only looking settles it.
+// Tilt nose-down and the model must tilt nose-down; roll right and it must
+// roll right. Negate whichever component goes the wrong way.
+const AXIS_ORDER = [0, 2, 1];
 const AXIS_SIGN = [1, 1, 1];
 
 const multiply = (a, b) => [
@@ -39,9 +53,9 @@ export function createOrientation() {
     lastSampleAt = performance.now();
     if (!(dt > 0) || dt > MAX_DT) return q;
 
-    const gx = gyro[0] * AXIS_SIGN[0] * DEG;
-    const gy = gyro[1] * AXIS_SIGN[1] * DEG;
-    const gz = gyro[2] * AXIS_SIGN[2] * DEG;
+    const gx = gyro[AXIS_ORDER[0]] * AXIS_SIGN[0] * DEG;
+    const gy = gyro[AXIS_ORDER[1]] * AXIS_SIGN[1] * DEG;
+    const gz = gyro[AXIS_ORDER[2]] * AXIS_SIGN[2] * DEG;
     const half = dt / 2;
     q = normalise(multiply(q, [gx * half, gy * half, gz * half, 1]));
 
@@ -49,9 +63,9 @@ export function createOrientation() {
     // during a shake it is measuring the shake, not down.
     const magnitude = Math.hypot(accel[0], accel[1], accel[2]);
     if (magnitude > 0.85 && magnitude < 1.15) {
-      const ax = (accel[0] * AXIS_SIGN[0]) / magnitude;
-      const ay = (accel[1] * AXIS_SIGN[1]) / magnitude;
-      const az = (accel[2] * AXIS_SIGN[2]) / magnitude;
+      const ax = (accel[AXIS_ORDER[0]] * AXIS_SIGN[0]) / magnitude;
+      const ay = (accel[AXIS_ORDER[1]] * AXIS_SIGN[1]) / magnitude;
+      const az = (accel[AXIS_ORDER[2]] * AXIS_SIGN[2]) / magnitude;
       const pitch = Math.atan2(-ax, Math.hypot(ay, az));
       const roll = Math.atan2(ay, az);
       const cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
