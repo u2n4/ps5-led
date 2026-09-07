@@ -30,6 +30,10 @@ export function mountControls(root, { boot, send, onShell, onRecentre }) {
       <input type="range" id="brightness" min="0.2" max="1" step="0.05" value="${boot.config.brightness}">
     </div>
     <div class="row">
+      <label data-i18n="duty">${t('duty')}</label>
+      <input type="range" id="duty" min="0.1" max="0.9" step="0.05" value="${boot.config.duty}">
+    </div>
+    <div class="row">
       <label data-i18n="shell">${t('shell')}</label>
       <div class="row" id="shells"></div>
       <label data-i18n="language">${t('language')}</label>
@@ -39,6 +43,12 @@ export function mountControls(root, { boot, send, onShell, onRecentre }) {
       </select>
       <button id="about" data-i18n="about">${t('about')}</button>
     </div>
+    <div class="row">
+      <label data-i18n="profiles">${t('profiles')}</label>
+      <input type="text" id="profile-name" aria-label="${t('profiles')}">
+      <button id="profile-save" data-i18n="profile_save">${t('profile_save')}</button>
+    </div>
+    <div class="row" id="profile-list"></div>
     <p id="about-text" hidden class="fallback"></p>
   `;
 
@@ -82,8 +92,53 @@ export function mountControls(root, { boot, send, onShell, onRecentre }) {
   root.querySelector('#brightness').addEventListener('input', (event) => {
     send({ cmd: 'set_brightness', brightness: Number(event.target.value) });
   });
+  root.querySelector('#duty').addEventListener('input', (event) => {
+    send({ cmd: 'set_duty', duty: Number(event.target.value) });
+  });
   root.querySelector('#off').addEventListener('click', () => send({ cmd: 'off' }));
   root.querySelector('#recentre').addEventListener('click', () => onRecentre?.());
+
+  // Each saved profile is a load button labelled with its own name -- the
+  // same pattern as the mode/shell buttons above, which are labelled with
+  // the thing they activate -- next to a delete button. profileItems keeps
+  // the list correct after a save (no duplicate entry for a name that
+  // already exists) or a delete (its element is dropped), with no reload.
+  const profileList = root.querySelector('#profile-list');
+  const profileItems = new Map();
+
+  function addProfile(name) {
+    if (profileItems.has(name)) return;
+    const item = document.createElement('span');
+    item.className = 'profile';
+    const load = document.createElement('button');
+    load.textContent = name;
+    load.addEventListener('click', () => send({ cmd: 'profile_load', name }));
+    const remove = document.createElement('button');
+    remove.textContent = t('profile_delete');
+    remove.dataset.i18n = 'profile_delete';
+    remove.setAttribute('aria-label', `${t('profile_delete')} ${name}`);
+    remove.addEventListener('click', async () => {
+      const result = await send({ cmd: 'profile_delete', name });
+      if (!result.ok) return;
+      profileItems.delete(name);
+      item.remove();
+    });
+    item.append(load, remove);
+    profileList.append(item);
+    profileItems.set(name, item);
+  }
+
+  for (const name of Object.keys(boot.config.profiles ?? {})) addProfile(name);
+
+  const profileName = root.querySelector('#profile-name');
+  root.querySelector('#profile-save').addEventListener('click', async () => {
+    const name = profileName.value.trim();
+    if (!name) return;
+    const result = await send({ cmd: 'profile_save', name });
+    if (!result.ok) return;
+    addProfile(name);
+    profileName.value = '';
+  });
 
   const language = root.querySelector('#language');
   language.value = boot.config.language;
