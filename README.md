@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-555?logo=windows&logoColor=white)](#-installation)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](CONTRIBUTING.md)
-[![Made with Tkinter](https://img.shields.io/badge/UI-Tkinter-FFD43B?logo=python&logoColor=333)](https://docs.python.org/3/library/tkinter.html)
+[![No dependencies](https://img.shields.io/badge/dependencies-none-22c55e?logo=python&logoColor=white)](requirements.txt)
 
 [![GitHub stars](https://img.shields.io/github/stars/u2n4/ps5-led?style=social)](https://github.com/u2n4/ps5-led/stargazers)
 
@@ -59,7 +59,7 @@ To run it again later, just paste the same line — or use the shortcut printed 
 - 🪟 **Fullscreen + tray** — runs fullscreen, minimizes to tray instead of quitting.
 - 🌌 **Animated starfield background** (toggleable).
 - 🎛️ **Headless / background mode** — drive the lightbar with no window via the CLI.
-- 🧩 **Single file, zero build step** — one `dualled_pro.py`, pure Python + Tkinter.
+- 🧩 **Zero build step, zero dependencies** — `python -m ps5led` and go; the UI is plain ES modules + three.js in your browser, no bundler, no npm install.
 
 > **Scope, honestly:** PS5 LED is focused on **lighting, battery, and presets**. It is *not* a music-reactive / macro / scheduling suite — it does one thing and does it cleanly.
 
@@ -77,37 +77,20 @@ To run it again later, just paste the same line — or use the shortcut printed 
 
 ## 🚀 Installation
 
-> **Requires Python 3.8+** and a controller connected over **USB** (Bluetooth works too on most setups).
+> **Requires Python 3.8+ and nothing else.** No pip install, no virtual env, no drivers to change. There are **zero third-party runtime dependencies** — controller I/O goes straight through the native Windows HID stack via `ctypes`.
 
 ```bash
 # 1. Clone
 git clone https://github.com/u2n4/ps5-led.git
 cd dualled-pro
 
-# 2. (recommended) virtual env
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS / Linux:
-source .venv/bin/activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Run
-python dualled_pro.py
+# 2. Run
+python -m ps5led
 ```
 
-**Minimal install** (just enough to run):
+### Do not use Zadig / WinUSB
 
-```bash
-pip install -U pydualsense hidapi
-python dualled_pro.py
-```
-
-### Windows driver note (PS5 DualSense)
-
-For `pydualsense` to talk to a DualSense, Windows needs the **WinUSB/libusb** driver bound to the controller. The simplest path is [Zadig](https://zadig.akeo.ie/): select the DualSense device → install **WinUSB**. (PS4 / generic HID controllers usually work without this.)
+Older versions of this app used `pydualsense` and needed the DualSense rebound to the **WinUSB** driver via [Zadig](https://zadig.akeo.ie/). **That is no longer true, and doing it now will break your controller for this app.** The current code reads the DualSense through Windows' own HID stack (`setupapi` + `hid.dll` + `kernel32`, see `ps5led/hid_win.py`); rebinding the device to WinUSB removes it from the HID stack entirely, so it stops being enumerated and this app can no longer see it. No driver change is needed — plug it in over USB or pair it over Bluetooth and it just works.
 
 ---
 
@@ -165,7 +148,7 @@ runs automatically. Config lives in your OS app-data folder
                         └──────────────────┘
 ```
 
-A background engine thread computes the current color (solid or animated effect) and pushes it to the physical lightbar over HID, while the Tkinter UI renders a 3D controller whose lightbar is tinted with the exact same value.
+A background engine thread computes the current color (solid or animated effect) and pushes it to the physical lightbar over HID, while a small local bridge serves a browser-based UI — plain ES modules and three.js, no build step — that renders a 3D controller whose lightbar is tinted with the exact same value.
 
 ---
 
@@ -179,7 +162,7 @@ PRs and issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Good firs
 
 ## 🙏 Acknowledgements
 
-Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https://github.com/trezor/cython-hidapi). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
+The DualSense HID report layouts (input reports, output reports, feature reports) are based on the Linux kernel's [`drivers/hid/hid-playstation.c`](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
 
 ## 🎨 Credits
 
@@ -210,7 +193,7 @@ Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https:
 - 🪟 **ملء الشاشة + تصغير للشريط** بدلاً من الإغلاق.
 - 🌌 **خلفية نجوم متحركة** (قابلة للإيقاف).
 - 🎛️ **وضع خلفي بدون واجهة** عبر سطر الأوامر.
-- 🧩 **ملف واحد، بدون أي بناء** — `dualled_pro.py` فقط، بايثون + Tkinter.
+- 🧩 **بدون بناء، بدون أي مكتبات خارجية** — شغّله بـ `python -m ps5led` وخلاص؛ الواجهة عبارة عن ES modules عادية + three.js داخل متصفحك، بدون bundler ولا npm install.
 
 > **بصراحة، نطاق البرنامج:** PS5 LED مركّز على **الإضاءة، البطارية، والإعدادات المحفوظة**. مو برنامج تفاعل مع الموسيقى ولا ماكروهات ولا جدولة — يسوّي شي واحد ويسوّيه نظيف.
 
@@ -246,32 +229,20 @@ irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 
 ### 🚀 التثبيت اليدوي (للمطورين)
 
-> يحتاج **بايثون 3.8+** ويد موصولة عبر **USB** (البلوتوث يشتغل بعد على أغلب الأجهزة).
+> يحتاج **بايثون 3.8+ بس، ولا شي ثاني.** ما فيه pip install، ولا بيئة افتراضية، ولا درايفرات تغيّرها. البرنامج **بدون أي مكتبات خارجية** — التخاطب مع اليد يمر مباشرة عبر HID stack الأصلي بويندوز عن طريق `ctypes`.
 
 ```bash
 # 1. انسخ المستودع
 git clone https://github.com/u2n4/ps5-led.git
 cd dualled-pro
 
-# 2. (يُفضّل) بيئة افتراضية
-python -m venv .venv
-.venv\Scripts\activate
-
-# 3. ركّب المتطلبات
-pip install -r requirements.txt
-
-# 4. شغّل
-python dualled_pro.py
+# 2. شغّل
+python -m ps5led
 ```
 
-**تثبيت سريع** (أقل شي يكفي للتشغيل):
+### لا تستخدم Zadig / WinUSB
 
-```bash
-pip install -U pydualsense hidapi
-python dualled_pro.py
-```
-
-> **ملاحظة درايفر ويندوز (يد PS5 DualSense):** عشان مكتبة `pydualsense` تكلّم اليد، ويندوز يحتاج درايفر **WinUSB/libusb** مربوط باليد. أسهل طريقة عبر [Zadig](https://zadig.akeo.ie/): اختر جهاز DualSense ← ثبّت **WinUSB**. (يد PS4 / الأجهزة العامة غالباً تشتغل بدون هذا.)
+نسخ قديمة من البرنامج كانت تستخدم `pydualsense` وتحتاج تحويل درايفر DualSense إلى **WinUSB** عبر [Zadig](https://zadig.akeo.ie/). **هذا الكلام ما عاد صحيح، ولو سويته الحين بيفسد اشتغال اليد مع البرنامج.** الكود الحالي يقرأ DualSense عبر HID stack الأصلي بويندوز (`setupapi` + `hid.dll` + `kernel32`، شوف `ps5led/hid_win.py`)؛ تحويل اليد لـ WinUSB يشيلها كليًا من HID stack، فما تنكشف (enumerate) بعدها ولا يقدر البرنامج يشوفها. ما فيه ولا تغيير درايفر مطلوب — وصّلها عبر USB أو زاوجها بلوتوث وتشتغل على طول.
 
 ---
 
@@ -326,7 +297,7 @@ python -m ps5led --no-browser --port 8731
                         └──────────────────┘
 ```
 
-خيط (thread) بالخلفية يحسب اللون الحالي (ثابت أو تأثير متحرّك) ويرسله للإضاءة الفعلية عبر HID، وبنفس الوقت واجهة Tkinter ترسم يد ثلاثية الأبعاد إضاءتها بنفس اللون بالضبط.
+خيط (thread) بالخلفية يحسب اللون الحالي (ثابت أو تأثير متحرّك) ويرسله للإضاءة الفعلية عبر HID، وبنفس الوقت bridge محلي صغير يخدّم واجهة عبر المتصفح — ES modules عادية و three.js، بدون أي بناء — ترسم يد ثلاثية الأبعاد إضاءتها بنفس اللون بالضبط.
 
 ---
 
@@ -340,6 +311,6 @@ python -m ps5led --no-browser --port 8731
 
 ### 🙏 شكر
 
-مبني على [`pydualsense`](https://github.com/flok/pydualsense) و [`hidapi`](https://github.com/trezor/cython-hidapi). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
+تخطيط تقارير HID الخاصة بـ DualSense (تقارير الإدخال والإخراج والـ feature) مبني على ملف نواة لينكس [`drivers/hid/hid-playstation.c`](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
 
 </div>
