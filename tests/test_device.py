@@ -1,3 +1,4 @@
+import struct
 import sys
 import time
 import types
@@ -5,8 +6,34 @@ import unittest
 
 import ps5led
 from ps5led import dualsense as ds
-from ps5led.device import DeviceManager, choose_device
+from ps5led import dualshock4 as ds4
+from ps5led.device import DEFAULT_RGB, DeviceManager, choose_device
+from ps5led.engine import colour_for
 from ps5led.state import AppState
+
+
+def calibration_blob(speed=2048, span=16384):
+    """A feature-report payload ``parse_calibration`` accepts.
+
+    Zero bias, symmetric span and a speed of ``speed`` give every axis a scale of
+    speed / (2 * span) = 0.0625 deg/s per LSB, comfortably inside the plausible
+    band. The real controller answers with something very close to this; a fake
+    that answered None would make every connect in this file record a
+    calibration failure it was never meant to be testing.
+    """
+    data = bytearray(ds.CALIBRATION_SIZE)
+    data[0] = ds.FEATURE_CALIBRATION
+
+    def put(offset, value):
+        struct.pack_into("<h", data, 1 + offset, value)
+
+    for axis in range(3):
+        put(axis * 2, 0)                # bias
+        put(6 + axis * 4, span)         # positive extreme
+        put(8 + axis * 4, -span)        # negative extreme
+    put(18, speed // 2)
+    put(20, speed - speed // 2)
+    return bytes(data)
 
 
 class FakeInfo(object):
@@ -32,25 +59,44 @@ class FakeDevice(object):
     """
 
     def __init__(self, manager=None, write_errors=(), read_error=None,
-                 on_get_feature=None):
+                 on_get_feature=None, feature=None, feature_error=None,
+                 on_write=None):
         self.manager = manager
         self.writes = []
         self.published_at_write = []
         self.closed = 0
         self.get_feature_calls = 0
+        # HidDevice's own field. A fake without it hides the seam --
+        # _connect reads device.last_error to explain a refused calibration.
+        self.last_error = None
         self._write_errors = list(write_errors)
         self._read_error = read_error
         self._on_get_feature = on_get_feature
+        # Called with the 0-based index of the write about to happen, before
+        # write_errors is consulted. Lets a test land another thread's work in
+        # an exact window without a real thread and without a sleep.
+        self._on_write = on_write
+        # None means "answer with a payload parse_calibration accepts", which
+        # is what a healthy controller does. Pass feature_error to model a
+        # refusal (get_feature returns None and leaves last_error behind), or
+        # feature=<bytes> to model a report that arrives and does not decode.
+        self._feature = calibration_blob() if feature is None else feature
+        self._feature_error = feature_error
 
     def get_feature(self, report_id, length):
         self.get_feature_calls += 1
         if self._on_get_feature is not None:
             self._on_get_feature()
-        return None
+        if self._feature_error is not None:
+            self.last_error = self._feature_error
+            return None
+        return self._feature
 
     def write(self, packet):
         self.published_at_write.append(
             self.manager is not None and self.manager._device is not None)
+        if self._on_write is not None:
+            self._on_write(len(self.published_at_write) - 1)
         error = self._write_errors.pop(0) if self._write_errors else None
         if error is not None:
             raise error
@@ -173,6 +219,107 @@ class TestConnectHandleLifetime(unittest.TestCase):
         self.assertFalse(state.snapshot().get("connected", False))
 
 
+class TestConnectLightsTheBar(unittest.TestCase):
+    """The setup packet is LIGHTBAR_SETUP_LIGHT_OUT: it leaves the bar dark.
+
+    _connect used to send it and then write a colour only if some caller had
+    already asked for one. --doctor never asks for one, so running the
+    diagnostic on a controller whose light had stopped working printed
+    "connected: true", exited 0, and turned the light off -- the exact silent
+    failure this branch exists to end, re-entered through the tool built to end
+    it. The Linux driver has the same two-step and never leaves the gap:
+    dualsense_probe() calls dualsense_reset_leds() and then
+    dualsense_set_lightbar() on the very next line.
+    """
+
+    def _connect_with(self, device, info=None):
+        install_fake_hid(self, [info or FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        self.assertTrue(manager._connect())
+        return manager
+
+    def test_a_connect_with_no_colour_requested_still_writes_one(self):
+        device = FakeDevice()
+        self._connect_with(device)
+
+        self.assertEqual(len(device.writes), 2)
+        self.assertEqual(device.writes[0],
+                         ds.build_output("usb", 48, lightbar_setup=True, seq=0))
+        self.assertEqual(device.writes[1],
+                         ds.build_output("usb", 48, rgb=DEFAULT_RGB, seq=1),
+                         "the connect must not end on the light-out packet")
+
+    def test_the_default_never_overrides_a_colour_already_asked_for(self):
+        device = FakeDevice()
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        manager.write_colour((1, 2, 3))  # no device yet: records the intent
+
+        self.assertTrue(manager._connect())
+
+        self.assertEqual(device.writes[-1], ds.build_output("usb", 48, rgb=(1, 2, 3), seq=1))
+
+    def test_a_dualshock4_connect_also_ends_lit(self):
+        # No setup packet on a DS4, so there is no light-out to undo -- but the
+        # rule is the same either way: a connected controller shows a colour.
+        device = FakeDevice()
+        self._connect_with(device, FakeInfo(0x09CC))
+
+        self.assertEqual(device.writes, [ds4.build_output("usb", DEFAULT_RGB)])
+
+    def test_the_engine_default_matches_the_connect_default(self):
+        # If these ever diverged, every connection would light the bar in one
+        # colour and the engine's first tick would immediately change it to
+        # another -- a visible flash on every reconnect.
+        self.assertEqual(colour_for("manual", 0.0, {}), DEFAULT_RGB)
+
+
+class TestCalibrationDiagnostics(unittest.TestCase):
+    """The calibration read is what switches a Bluetooth DualSense out of its
+    reduced report. Its failure is the most diagnostic event on the transport
+    nobody has tested yet, and --doctor has to be able to name it -- _connect
+    used to drop both the Win32 reason and the fact that a report had arrived
+    and failed to decode.
+    """
+
+    def _connect_with(self, device):
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        self.assertTrue(manager._connect())
+        return manager
+
+    def test_a_refused_read_carries_the_devices_own_reason(self):
+        device = FakeDevice(feature_error="IOCTL_HID_GET_FEATURE(0x5) failed: "
+                                          "Win32 error 31")
+        view = self._connect_with(device).describe()
+
+        self.assertTrue(view["connected"])
+        self.assertIsNone(view["gyro_scales"])
+        self.assertIn("refused", view["last_error"])
+        self.assertIn("Win32 error 31", view["last_error"],
+                      "the Win32 reason must survive the connect, not be dropped")
+
+    def test_implausible_data_is_not_reported_as_a_refusal(self):
+        # A report that arrived and did not decode points at the layout; a
+        # refusal points at the driver or another process. Opposite fixes.
+        device = FakeDevice(feature=bytes([ds.FEATURE_CALIBRATION])
+                            + b"\x00" * (ds.CALIBRATION_SIZE - 1))
+        view = self._connect_with(device).describe()
+
+        self.assertTrue(view["connected"])
+        self.assertIsNone(view["gyro_scales"])
+        self.assertIn("implausible", view["last_error"])
+        self.assertNotIn("refused", view["last_error"])
+
+    def test_a_healthy_read_leaves_no_error_behind(self):
+        view = self._connect_with(FakeDevice()).describe()
+
+        self.assertTrue(view["connected"])
+        self.assertIsNotNone(view["gyro_scales"])
+        self.assertIsNone(view["last_error"],
+                          "a clean connect must still clear earlier failures")
+
+
 class TestWriteFailureRecovery(unittest.TestCase):
     def _connected_manager(self, device):
         install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
@@ -184,13 +331,17 @@ class TestWriteFailureRecovery(unittest.TestCase):
         """The colour recorded must be the newest one asked for, not the last
         one that reached the wire.
 
-        write_colour returns False rather than raising, so Engine advances its
-        own _last_written and will never re-issue the colour. The reconnect
-        resend is the only recovery path there is, and it can only resend what
-        _last_rgb holds -- so recording it on success alone would strand the
-        lightbar on a stale colour with nothing left to notice.
+        The reconnect resend can only resend what _last_rgb holds, so recording
+        it on success alone would have the reconnect faithfully restore a stale
+        colour. Engine's retry does not cover this: it fills the gap only from
+        its next tick onward, and a caller that is not the Engine has no retry
+        at all.
         """
-        device = FakeDevice(write_errors=[None, None, RuntimeError("write timed out")])
+        # Four writes, in order: _connect's setup packet, _connect's colour (the
+        # default, since nothing has been asked for yet), then the two
+        # write_colour calls below.
+        device = FakeDevice(
+            write_errors=[None, None, None, RuntimeError("write timed out")])
         manager = self._connected_manager(device)
         self.assertTrue(manager.write_colour((1, 2, 3)))
 
@@ -228,6 +379,73 @@ class TestWriteFailureRecovery(unittest.TestCase):
         self.assertEqual(len(device.writes), 2)  # setup packet, then the resend
         self.assertEqual(device.published_at_write, [False, False])
         self.assertEqual(device.writes[-1], ds.build_output("usb", 48, rgb=(4, 5, 6)))
+
+
+class TestStartupRace(unittest.TestCase):
+    def test_a_colour_asked_for_during_connect_never_leaves_the_bar_dark(self):
+        """The window between _connect reading _last_rgb and publishing.
+
+        A write_colour landing in there records its colour, finds self._device
+        still None, and returns False -- while _connect goes on to write the
+        colour it read a moment earlier and publish. With the light-out setup
+        packet already sent and the engine marking a colour written whether or
+        not it landed, the outcome was a dark bar, connected: true, and no error
+        anywhere. Narrow window, permanent and silent result.
+
+        Two independent closures, both asserted here: the connect ends on a
+        colour rather than on light-out, and the loser's False return is a
+        retryable failure with its intent recorded for the next reconnect.
+        """
+        manager = DeviceManager(AppState())
+        landed = []
+
+        def intrude(index):
+            # Index 1 is _connect's colour write -- after it read _last_rgb,
+            # before it publishes. Exactly the window.
+            if index == 1:
+                landed.append(manager.write_colour((5, 5, 5)))
+
+        device = FakeDevice(manager=manager, on_write=intrude)
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+
+        self.assertTrue(manager._connect())
+
+        self.assertEqual(landed, [False],
+                         "the intruding write must report that it did not land")
+        self.assertEqual(device.writes[-1],
+                         ds.build_output("usb", 48, rgb=DEFAULT_RGB, seq=1),
+                         "the connect must still end on a colour, not light-out")
+        self.assertEqual(manager._last_rgb, (5, 5, 5),
+                         "the colour that lost the race must survive to the "
+                         "next reconnect")
+
+
+class TestDropIsScopedToOneHandle(unittest.TestCase):
+    def test_a_failed_write_does_not_close_a_newer_healthy_handle(self):
+        """write_colour releases the lock for the write itself.
+
+        The reader can drop that handle and finish a reconnect inside that
+        window, so an unconditional close on the failure path would take down
+        the healthy new connection on behalf of a handle that is already gone.
+        """
+        device = FakeDevice(write_errors=[None, None, RuntimeError("write timed out")])
+        install_fake_hid(self, [FakeInfo(0x0CE6)], lambda path: device)
+        manager = DeviceManager(AppState())
+        self.assertTrue(manager._connect())
+        replacement = FakeDevice()
+
+        def reconnect_underneath(index):
+            with manager._lock:
+                manager._device = replacement
+
+        device._on_write = reconnect_underneath
+
+        self.assertFalse(manager.write_colour((1, 2, 3)))
+
+        self.assertEqual(replacement.closed, 0,
+                         "the new handle belongs to the reader, not to this "
+                         "failure")
+        self.assertIs(manager._device, replacement)
 
 
 class TestErrorProvenance(unittest.TestCase):

@@ -8,9 +8,9 @@ result actually changed — a solid colour costs one write, not thirty a second.
 import math
 import threading
 
-MODES = ("manual", "rainbow", "wave", "flash", "battery")
+from .device import DEFAULT_RGB as _DEFAULT_COLOUR
 
-_DEFAULT_COLOUR = (0, 170, 255)
+MODES = ("manual", "rainbow", "wave", "flash", "battery")
 
 
 def hsv_to_rgb(h, s, v):
@@ -54,7 +54,13 @@ def colour_for(mode, phase, settings):
 
 
 class Engine(threading.Thread):
-    """Drives ``write_colour`` at a fixed interval, only when the colour changed."""
+    """Drives ``write_colour`` at a fixed interval, only when the colour changed.
+
+    ``write_colour`` must return a truthy value when the colour reached the
+    device. Falsy means it did not, and the colour is retried on the next tick;
+    an exception is treated the same way. This is DeviceManager.write_colour's
+    contract, and any test double stands in for it under the same rule.
+    """
 
     def __init__(self, state, write_colour, interval=1 / 30.0):
         threading.Thread.__init__(self, name="ps5led-engine", daemon=True)
@@ -98,10 +104,21 @@ class Engine(threading.Thread):
     def run(self):
         phase = 0.0
         while not self._stop.is_set():
+            # Read AppState before taking self._lock, never inside it: AppState
+            # has a lock of its own and nesting the two would fix an ordering
+            # nothing else in the process observes.
+            battery = self._state.snapshot().get("battery")
             with self._lock:
                 mode = self._mode
                 settings = dict(self._settings)
                 speed = self._speed
+            # The live level overrides whatever set_setting("battery") holds.
+            # DeviceManager publishes battery into AppState from each input
+            # report; that is the only source there is, and without this line
+            # "battery" mode had no way to see it -- MODES advertised the mode,
+            # colour_for implemented it, and the wire between them was missing,
+            # so it rendered as plain manual on every real run.
+            settings["battery"] = battery
             rgb = colour_for(mode, phase, settings)
             # Publish every tick, unconditionally. AppState.update() already
             # no-ops per field when nothing changed, so this is cheap and
@@ -109,19 +126,26 @@ class Engine(threading.Thread):
             # on a tick where the resulting colour happens not to change.
             self._state.update(rgb=rgb, mode=mode)
             if rgb != self._last_written:
+                # Two ways for a write not to land, and both must count as a
+                # failure. DeviceManager.write_colour is the real writer and it
+                # NEVER raises -- every failure path returns False -- so gating
+                # on "did not raise" alone marked as delivered a colour that
+                # never left the process, and in a mode that writes once
+                # (manual) nothing ever asked for it again. Truthiness is the
+                # contract; the except is still needed because _write is an
+                # injected callable and a genuinely broken one can raise.
                 try:
-                    self._write(rgb)
-                    # Only mark it written after the write actually
-                    # succeeds. A failed write must be retried on the next
-                    # tick rather than silently treated as delivered; this
-                    # still costs exactly one write per solid colour, since a
-                    # successful write gates every following identical tick
-                    # the same as before.
-                    self._last_written = rgb
+                    written = self._write(rgb)
                 except Exception:
                     # A device that vanished is DeviceManager's problem to
                     # notice and recover from; the engine must keep running.
-                    pass
+                    written = False
+                if written:
+                    # Marked written only once it really was. A failed write is
+                    # retried on the next tick; this still costs exactly one
+                    # write per solid colour, because a successful write gates
+                    # every following identical tick the same as before.
+                    self._last_written = rgb
             # One full 0..1 phase cycle takes 2 seconds at speed=1.0 (the 0.5
             # factor is that half-cycle-per-second base rate); speed scales
             # it up or down from there.
