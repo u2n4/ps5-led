@@ -25,6 +25,51 @@ from .engine import MODES
 WEB_ROOT = pathlib.Path(__file__).resolve().parent.parent / "web"
 TOKEN_BYTES = 16
 
+SHELLS = ("white", "black", "red")
+
+_SPEED_RANGE = (0.1, 5.0)
+_BRIGHTNESS_RANGE = (0.2, 1.0)
+_DUTY_RANGE = (0.1, 0.9)
+
+# Which config key each numeric command writes, and the range it is held to.
+# The ranges match Engine.set_speed and colour_for's own expectations; a value
+# outside them is a slider that has been driven past its own labels, so it is
+# clamped rather than refused.
+_NUMERIC = {
+    "set_speed": ("speed", _SPEED_RANGE),
+    "set_brightness": ("brightness", _BRIGHTNESS_RANGE),
+    "set_duty": ("duty", _DUTY_RANGE),
+}
+
+_PROFILE_KEYS = ("mode", "colour", "speed", "brightness", "duty")
+
+
+def parse_colour(value):
+    """[r,g,b], (r,g,b) or "00aaff"/"#00aaff" to a clamped (r, g, b), or None."""
+    if isinstance(value, str):
+        text = value.strip().lstrip("#")
+        if len(text) != 6:
+            return None
+        try:
+            number = int(text, 16)
+        except ValueError:
+            return None
+        value = ((number >> 16) & 0xFF, (number >> 8) & 0xFF, number & 0xFF)
+    try:
+        r, g, b = value
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for channel in (r, g, b):
+        if isinstance(channel, bool) or not isinstance(channel, (int, float)):
+            return None
+        out.append(max(0, min(255, int(round(channel)))))
+    return tuple(out)
+
+
+def _clamp(value, low, high):
+    return max(low, min(high, value))
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "PS5LED"
@@ -74,6 +119,21 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._serve_static(path)
 
+    def do_POST(self):
+        if not self._authorised():
+            self._send(403, json.dumps({"error": "forbidden"}))
+            return
+        if urllib.parse.urlparse(self.path).path != "/api/cmd":
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send(400, json.dumps({"ok": False, "error": "malformed json"}))
+            return
+        self._send(200, json.dumps(self.bridge.handle_command(payload)))
+
     def _serve_static(self, path):
         if path in ("", "/"):
             path = "/index.html"
@@ -105,6 +165,7 @@ class Bridge(object):
         self._host = host
         self._requested_port = port
         self.token = secrets.token_urlsafe(TOKEN_BYTES)
+        self.page_visible = True
         self._server = None
         self._thread = None
 
@@ -126,6 +187,116 @@ class Bridge(object):
             "modes": list(MODES),
             "device": device,
         }
+
+    def handle_command(self, payload):
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        cmd = payload.get("cmd")
+        handler = getattr(self, "_cmd_" + str(cmd), None) if cmd else None
+        if handler is None:
+            return {"ok": False, "error": "unknown command: %r" % (cmd,)}
+        try:
+            return handler(payload)
+        except Exception as exc:  # a bad command must not take the bridge down
+            return {"ok": False, "error": str(exc)}
+
+    def _cmd_set_mode(self, payload):
+        mode = payload.get("mode")
+        if mode not in MODES:
+            return {"ok": False, "error": "unknown mode: %r" % (mode,)}
+        if self._engine is not None:
+            self._engine.set_mode(mode)
+        self._config.set("mode", mode)
+        return {"ok": True, "mode": mode}
+
+    def _cmd_set_colour(self, payload):
+        rgb = parse_colour(payload.get("colour"))
+        if rgb is None:
+            return {"ok": False, "error": "not a colour: %r" % (payload.get("colour"),)}
+        if self._engine is not None:
+            self._engine.set_colour(rgb)
+        self._config.set("colour", list(rgb))
+        return {"ok": True, "colour": list(rgb)}
+
+    def _numeric(self, payload, cmd):
+        key, (low, high) = _NUMERIC[cmd]
+        value = payload.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return {"ok": False, "error": "%s must be a number" % key}
+        value = _clamp(float(value), low, high)
+        if self._engine is not None:
+            if cmd == "set_speed":
+                self._engine.set_speed(value)
+            else:
+                self._engine.set_setting(key, value)
+        self._config.set(key, value)
+        return {"ok": True, key: value}
+
+    def _cmd_set_speed(self, payload):
+        return self._numeric(payload, "set_speed")
+
+    def _cmd_set_brightness(self, payload):
+        return self._numeric(payload, "set_brightness")
+
+    def _cmd_set_duty(self, payload):
+        return self._numeric(payload, "set_duty")
+
+    def _cmd_set_language(self, payload):
+        language = payload.get("language")
+        if language not in i18n.LANGUAGES:
+            return {"ok": False, "error": "unknown language: %r" % (language,)}
+        self._config.set("language", language)
+        return {"ok": True, "language": language}
+
+    def _cmd_set_shell(self, payload):
+        shell = payload.get("shell")
+        if shell not in SHELLS:
+            return {"ok": False, "error": "unknown shell: %r" % (shell,)}
+        self._config.set("shell", shell)
+        return {"ok": True, "shell": shell}
+
+    def _cmd_profile_save(self, payload):
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return {"ok": False, "error": "a profile needs a name"}
+        profiles = dict(self._config.get("profiles") or {})
+        profiles[name] = {key: self._config.get(key) for key in _PROFILE_KEYS}
+        self._config.set("profiles", profiles)
+        return {"ok": True, "name": name}
+
+    def _cmd_profile_load(self, payload):
+        name = str(payload.get("name") or "").strip()
+        saved = (self._config.get("profiles") or {}).get(name)
+        if not saved:
+            return {"ok": False, "error": "no profile named %r" % (name,)}
+        if "mode" in saved:
+            self._cmd_set_mode({"mode": saved["mode"]})
+        if "colour" in saved:
+            self._cmd_set_colour({"colour": saved["colour"]})
+        for key in ("speed", "brightness", "duty"):
+            if key in saved:
+                self._numeric({key: saved[key]}, "set_" + key)
+        return {"ok": True, "name": name}
+
+    def _cmd_profile_delete(self, payload):
+        name = str(payload.get("name") or "").strip()
+        profiles = dict(self._config.get("profiles") or {})
+        if name not in profiles:
+            return {"ok": False, "error": "no profile named %r" % (name,)}
+        del profiles[name]
+        self._config.set("profiles", profiles)
+        return {"ok": True, "name": name}
+
+    def _cmd_off(self, payload):
+        # Deliberately does not touch the saved colour: turning the bar off is
+        # not a choice of colour, and overwriting it would lose the user's.
+        if self._engine is not None:
+            self._engine.set_colour((0, 0, 0))
+        return {"ok": True}
+
+    def _cmd_visible(self, payload):
+        self.page_visible = bool(payload.get("visible", True))
+        return {"ok": True, "visible": self.page_visible}
 
     def start(self):
         self._server = ThreadingHTTPServer((self._host, self._requested_port), _Handler)
