@@ -143,6 +143,48 @@ def run_background(state=None, mode="manual", colour=None, speed=1.0):
     return 0
 
 
+def run_window(mode=None, colour=None, speed=None, port=0, open_browser=True):
+    if not _require_windows():
+        return 2
+    from .bridge import Bridge
+    from .config import Config
+    from . import launcher
+
+    config = Config()
+    state = AppState()
+    manager = DeviceManager(state)
+    engine = Engine(state, manager.write_colour)
+    engine.set_mode(mode or config.get("mode"))
+    engine.set_speed(speed if speed is not None else config.get("speed"))
+    engine.set_colour(colour or tuple(config.get("colour")))
+    bridge = Bridge(state, config, manager=manager, engine=engine, port=port)
+
+    process = None
+    try:
+        manager.start()
+        engine.start()
+        bridge.start()
+        print("PS5 LED bridge on %s" % bridge.url)
+        if open_browser:
+            window = config.get("window") or {}
+            process = launcher.launch(
+                bridge.url,
+                fullscreen=bool(window.get("fullscreen")),
+                size=(window.get("width", 1280), window.get("height", 800)))
+            launcher.wait_for_close(process)
+        else:
+            while True:
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bridge.stop()
+        engine.stop()
+        manager.stop()
+        config.flush()
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="ps5led")
     parser.add_argument("--version", action="version", version=__version__)
@@ -157,15 +199,22 @@ def main(argv=None):
                         help="hex colour for the modes that use one, e.g. 00aaff")
     parser.add_argument("--speed", type=float, default=1.0,
                         help="animation speed, 0.1 to 5.0 (default: 1.0)")
+    parser.add_argument("--window", action="store_true",
+                        help="open the app window (default when no other action)")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="run the bridge without opening a window")
+    parser.add_argument("--port", type=int, default=0,
+                        help="bridge port (default: an ephemeral one)")
     args = parser.parse_args(argv)
 
     if args.doctor:
         return doctor()
+    try:
+        colour = _parse_colour(args.colour)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.background:
-        try:
-            colour = _parse_colour(args.colour)
-        except ValueError as exc:
-            parser.error(str(exc))
         return run_background(mode=args.mode, colour=colour, speed=args.speed)
-    parser.print_help()
-    return 0
+    return run_window(mode=args.mode if args.mode != "manual" else None,
+                      colour=colour, speed=args.speed, port=args.port,
+                      open_browser=not args.no_browser)
