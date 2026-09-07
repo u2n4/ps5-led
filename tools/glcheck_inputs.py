@@ -72,8 +72,9 @@ print("index counts per part:")
 for name in sorted(parts, key=lambda k: (k is None, k)):
     print("   %-14s %d" % (name or "(static)", parts[name]))
 missing = [p for p in ("stick_left", "stick_right", "trigger_left",
-                       "trigger_right", "square", "circle", "triangle",
-                       "cross", "dpad") if not parts.get(p)]
+                       "trigger_right", "bumper_left", "bumper_right",
+                       "square", "circle", "triangle", "cross", "dpad",
+                       "touchpad") if not parts.get(p)]
 print("parts with no geometry:", missing or "none")
 print()
 
@@ -88,6 +89,9 @@ cases = [
     ("triangle held",      sample(buttons=8 | (1 << cg.BUTTON_BITS["triangle"]))),
     ("cross held",         sample(buttons=8 | (1 << cg.BUTTON_BITS["cross"]))),
     ("d-pad up",           sample(buttons=0)),
+    ("L1 held",            sample(buttons=8 | (1 << 8))),
+    ("R1 held",            sample(buttons=8 | (1 << 9))),
+    ("touchpad clicked",   sample(buttons=8 | (1 << 17))),
 ]
 
 print("%-20s %12s" % ("input", "pixels moved"))
@@ -99,6 +103,17 @@ for label, s in cases:
     print("%-20s %12d" % (label, moved))
     render(sample())          # back to rest between cases
 
+# R1 and R2 shared one mesh once, so pressing R2 moved the bumper too. If they
+# are still fused these two frames are identical.
+r2 = render(sample(triggers=(0.0, 1.0)))
+render(sample())
+r1 = render(sample(buttons=8 | (1 << 9)))
+render(sample())
+separated = sum(1 for a, b in zip(r1, r2) if a != b) // 3
+print()
+print("R1 frame vs R2 frame, pixels differing:", separated,
+      "(0 would mean they still move together)")
+
 print()
 dead = [label for label, moved in results if moved < 50]
 if missing:
@@ -106,6 +121,9 @@ if missing:
     code = 1
 elif dead:
     print("VERDICT: these inputs moved nothing —", ", ".join(dead))
+    code = 1
+elif separated < 50:
+    print("VERDICT: R1 and R2 still move together")
     code = 1
 else:
     print("VERDICT: every input moves its part")
