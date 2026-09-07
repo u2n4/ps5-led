@@ -9,7 +9,10 @@ This module is pure: bytes in, bytes out, no I/O and no Windows imports, so it
 runs under CI on Linux.
 """
 
-from .crc import OUTPUT_SEED, append_crc32
+import struct
+from typing import NamedTuple, Optional, Tuple
+
+from .crc import INPUT_SEED, OUTPUT_SEED, append_crc32, check_crc32
 
 VENDOR_ID = 0x054C
 PRODUCT_IDS = (0x0CE6, 0x0DF2)  # DualSense, DualSense Edge
@@ -109,3 +112,105 @@ def build_output(transport, length, rgb=None, player_leds=None, mic_led=None,
         append_crc32(OUTPUT_SEED, report)
 
     return bytes(report)
+
+
+DEFAULT_GYRO_SCALE = 1.0 / 16.0
+
+BODY_SIZE = 63
+
+# Offsets inside struct dualsense_input_report.
+_STICKS = 0
+_TRIGGERS = 4
+_BUTTONS = 7
+_GYRO = 15
+_ACCEL = 21
+_TIMESTAMP = 27
+_TOUCH = 32
+_STATUS = 52
+
+# Where the body begins, keyed by (report id, total length).
+_BODY_OFFSET = {
+    (INPUT_REPORT_USB, USB_INPUT_SIZE): 1,
+    (INPUT_REPORT_BT, BT_INPUT_SIZE): 2,
+}
+
+
+class InputState(NamedTuple):
+    sticks: Tuple[int, int, int, int]
+    triggers: Tuple[int, int]
+    buttons: int
+    gyro_raw: Tuple[int, int, int]
+    accel_raw: Tuple[int, int, int]
+    timestamp: int
+    touch: Tuple[Optional[Tuple[int, int]], Optional[Tuple[int, int]]]
+    battery_percent: int
+    charge_state: int
+
+
+def _touch_point(data, base):
+    """Decode one touch slot. Bit 7 of the first byte is set when no finger is down."""
+    if data[base] & 0x80:
+        return None
+    x = data[base + 1] | ((data[base + 2] & 0x0F) << 8)
+    y = (data[base + 2] >> 4) | (data[base + 3] << 4)
+    return (x, y)
+
+
+def parse_input(data):
+    """Decode a DualSense input report, or None if it is not one we trust.
+
+    Rejects the reduced 10-byte Bluetooth report the controller sends before its
+    calibration has been read, and any Bluetooth report whose CRC fails — a
+    corrupt sample would otherwise be integrated into the orientation estimate.
+    """
+    if len(data) < 2:
+        return None
+    body = _BODY_OFFSET.get((data[0], len(data)))
+    if body is None:
+        return None
+    if data[0] == INPUT_REPORT_BT and not check_crc32(INPUT_SEED, data):
+        return None
+
+    def i16(offset):
+        return struct.unpack_from("<h", data, body + offset)[0]
+
+    status = data[body + _STATUS]
+    return InputState(
+        sticks=tuple(data[body + _STICKS:body + _STICKS + 4]),
+        triggers=(data[body + _TRIGGERS], data[body + _TRIGGERS + 1]),
+        buttons=struct.unpack_from("<I", data, body + _BUTTONS)[0],
+        gyro_raw=(i16(_GYRO), i16(_GYRO + 2), i16(_GYRO + 4)),
+        accel_raw=(i16(_ACCEL), i16(_ACCEL + 2), i16(_ACCEL + 4)),
+        timestamp=struct.unpack_from("<I", data, body + _TIMESTAMP)[0],
+        touch=(_touch_point(data, body + _TOUCH), _touch_point(data, body + _TOUCH + 4)),
+        battery_percent=min(100, (status & 0x0F) * 10),
+        charge_state=status >> 4,
+    )
+
+
+def parse_calibration(data):
+    """Per-axis gyro scale in degrees per second per LSB, or None if implausible.
+
+    Reading this feature report also switches a Bluetooth DualSense out of its
+    reduced report into the full 0x31 report, so the caller should do it on every
+    connection even when the default scale would be acceptable.
+    """
+    if len(data) != CALIBRATION_SIZE or data[0] != FEATURE_CALIBRATION:
+        return None
+    body = 1
+
+    def i16(offset):
+        return struct.unpack_from("<h", data, body + offset)[0]
+
+    speed = i16(18) + i16(20)
+    scales = []
+    for axis in range(3):
+        bias = i16(axis * 2)
+        span = abs(i16(6 + axis * 4) - bias) + abs(i16(8 + axis * 4) - bias)
+        if span == 0:
+            return None
+        scale = speed / float(span)
+        if not 0.001 < scale < 1.0:
+            return None
+        scales.append(scale)
+    return tuple(scales)
