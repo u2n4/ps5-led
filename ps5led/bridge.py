@@ -359,13 +359,24 @@ class Bridge(object):
         saved = (self._config.get("profiles") or {}).get(name)
         if not saved:
             return {"ok": False, "error": "no profile named %r" % (name,)}
+        # Every sub-command's own result is checked: a stored value that is no
+        # longer valid (a mode that was renamed, a colour that fails
+        # validation) must not be reported as a successful load, because
+        # nothing changed for that part.
+        failed = []
         if "mode" in saved:
-            self._cmd_set_mode({"mode": saved["mode"]})
+            if not self._cmd_set_mode({"mode": saved["mode"]})["ok"]:
+                failed.append("mode")
         if "colour" in saved:
-            self._cmd_set_colour({"colour": saved["colour"]})
+            if not self._cmd_set_colour({"colour": saved["colour"]})["ok"]:
+                failed.append("colour")
         for key in ("speed", "brightness", "duty"):
             if key in saved:
-                self._numeric({key: saved[key]}, "set_" + key)
+                if not self._numeric({key: saved[key]}, "set_" + key)["ok"]:
+                    failed.append(key)
+        if failed:
+            return {"ok": False, "name": name,
+                    "error": "profile %r did not fully apply: %s" % (name, ", ".join(failed))}
         return {"ok": True, "name": name}
 
     def _cmd_profile_delete(self, payload):
