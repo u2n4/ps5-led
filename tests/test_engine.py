@@ -155,6 +155,54 @@ class TestEngineThread(unittest.TestCase):
         self.assertTrue(alive, "the engine must survive a write failure")
         self.assertGreater(len(calls), 1)
 
+    def test_mode_switch_to_an_identical_colour_is_still_observable_in_state(self):
+        # Regression for IMPORTANT 1: AppState.mode must not get stuck on a
+        # stale value just because the resulting colour did not change.
+        state = AppState()
+        engine = Engine(state, lambda rgb: None, interval=0.005)
+        engine.set_mode("manual")
+        engine.set_colour((0, 170, 255))
+        engine.start()
+        time.sleep(0.1)
+        # battery is None, so colour_for("battery", ...) falls back to the
+        # identical manual colour -- the rgb the engine writes does not change,
+        # but the mode the caller asked for did, and AppState must say so.
+        engine.set_mode("battery")
+        time.sleep(0.1)
+        engine.stop()
+        snap = state.snapshot()
+        self.assertEqual(snap["rgb"], (0, 170, 255))
+        self.assertEqual(snap["mode"], "battery",
+                         "AppState.mode must track the live mode even when "
+                         "the resulting colour is unchanged")
+
+    def test_writer_that_fails_once_then_succeeds_eventually_delivers(self):
+        # Regression for IMPORTANT 2: a transient write failure must not
+        # permanently desync _last_written (and AppState) from what the
+        # device actually holds -- the next tick should retry, not skip.
+        calls = []
+        state = AppState()
+
+        def flaky_writer(rgb):
+            calls.append(rgb)
+            if len(calls) == 1:
+                raise RuntimeError("device busy, try again")
+
+        engine = Engine(state, flaky_writer, interval=0.005)
+        engine.set_mode("manual")
+        engine.set_colour((10, 20, 30))
+        engine.start()
+        time.sleep(0.15)
+        engine.stop()
+
+        self.assertGreaterEqual(len(calls), 2,
+                                "a writer that failed once must be retried, "
+                                "not abandoned forever")
+        self.assertTrue(all(rgb == (10, 20, 30) for rgb in calls))
+        # AppState must not claim the colour was delivered before a write
+        # actually succeeded.
+        self.assertEqual(state.snapshot()["rgb"], (10, 20, 30))
+
 
 if __name__ == "__main__":
     unittest.main()
