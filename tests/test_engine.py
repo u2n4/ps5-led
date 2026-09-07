@@ -2,6 +2,7 @@ import threading
 import time
 import unittest
 
+from ps5led.device import DEFAULT_RGB, DeviceManager
 from ps5led.engine import Engine, MODES, colour_for, hsv_to_rgb
 from ps5led.state import AppState
 
@@ -12,6 +13,23 @@ def settings(**overrides):
     merged = dict(BASE)
     merged.update(overrides)
     return merged
+
+
+def recording_writer(sink, ok=True):
+    """A writer that records what it was given and reports the truth about it.
+
+    The engine's writer contract is DeviceManager.write_colour's: truthy means
+    the colour reached the device, falsy means it did not and must be retried.
+    ``writes.append`` returns None, so a fake built on it stands for a writer
+    that fails every single time -- and a test using one would measure the
+    engine's retry behaviour while claiming to measure its write-once
+    behaviour. That mismatch is exactly what let the engine's success gate go
+    unnoticed: the fakes here raised where the real writer returns False.
+    """
+    def write(rgb):
+        sink.append(rgb)
+        return ok
+    return write
 
 
 class TestHsv(unittest.TestCase):
@@ -101,7 +119,7 @@ class TestEngineThread(unittest.TestCase):
     def test_writes_once_for_a_solid_colour(self):
         writes = []
         state = AppState()
-        engine = Engine(state, writes.append, interval=0.005)
+        engine = Engine(state, recording_writer(writes), interval=0.005)
         engine.set_mode("manual")
         engine.set_colour((10, 20, 30))
         engine.start()
@@ -112,7 +130,7 @@ class TestEngineThread(unittest.TestCase):
 
     def test_writes_repeatedly_for_an_animated_mode(self):
         writes = []
-        engine = Engine(AppState(), writes.append, interval=0.005)
+        engine = Engine(AppState(), recording_writer(writes), interval=0.005)
         engine.set_mode("rainbow")
         engine.start()
         time.sleep(0.2)
@@ -121,7 +139,7 @@ class TestEngineThread(unittest.TestCase):
 
     def test_publishes_colour_to_state(self):
         state = AppState()
-        engine = Engine(state, lambda rgb: None, interval=0.005)
+        engine = Engine(state, recording_writer([]), interval=0.005)
         engine.set_mode("manual")
         engine.set_colour((1, 2, 3))
         engine.start()
@@ -131,7 +149,7 @@ class TestEngineThread(unittest.TestCase):
 
     def test_stop_joins_the_thread(self):
         before = threading.active_count()
-        engine = Engine(AppState(), lambda rgb: None, interval=0.005)
+        engine = Engine(AppState(), recording_writer([]), interval=0.005)
         engine.start()
         self.assertTrue(engine.is_alive())
         engine.stop()
@@ -159,7 +177,7 @@ class TestEngineThread(unittest.TestCase):
         # Regression for IMPORTANT 1: AppState.mode must not get stuck on a
         # stale value just because the resulting colour did not change.
         state = AppState()
-        engine = Engine(state, lambda rgb: None, interval=0.005)
+        engine = Engine(state, recording_writer([]), interval=0.005)
         engine.set_mode("manual")
         engine.set_colour((0, 170, 255))
         engine.start()
@@ -176,10 +194,12 @@ class TestEngineThread(unittest.TestCase):
                          "AppState.mode must track the live mode even when "
                          "the resulting colour is unchanged")
 
-    def test_writer_that_fails_once_then_succeeds_eventually_delivers(self):
-        # Regression for IMPORTANT 2: a transient write failure must not
-        # permanently desync _last_written (and AppState) from what the
-        # device actually holds -- the next tick should retry, not skip.
+    def test_writer_that_raises_once_then_succeeds_eventually_delivers(self):
+        # A transient write failure must not permanently desync _last_written
+        # (and AppState) from what the device actually holds -- the next tick
+        # should retry, not skip. This covers the raising half of the contract
+        # only; the real writer never raises, and the returns-False half is
+        # test_a_writer_that_returns_false_is_retried_then_settles below.
         calls = []
         state = AppState()
 
@@ -187,6 +207,7 @@ class TestEngineThread(unittest.TestCase):
             calls.append(rgb)
             if len(calls) == 1:
                 raise RuntimeError("device busy, try again")
+            return True
 
         engine = Engine(state, flaky_writer, interval=0.005)
         engine.set_mode("manual")
@@ -195,13 +216,100 @@ class TestEngineThread(unittest.TestCase):
         time.sleep(0.15)
         engine.stop()
 
-        self.assertGreaterEqual(len(calls), 2,
-                                "a writer that failed once must be retried, "
-                                "not abandoned forever")
+        self.assertEqual(len(calls), 2,
+                         "a writer that failed once must be retried once, then "
+                         "left alone after it succeeds")
         self.assertTrue(all(rgb == (10, 20, 30) for rgb in calls))
         # AppState must not claim the colour was delivered before a write
         # actually succeeded.
         self.assertEqual(state.snapshot()["rgb"], (10, 20, 30))
+
+    def test_a_writer_that_returns_false_is_retried_then_settles(self):
+        """The contract the production writer actually speaks.
+
+        DeviceManager.write_colour never raises -- every failure path returns
+        False. The engine used to advance _last_written whenever the call did
+        not raise, so a colour that never left the process was marked delivered
+        and, in a mode that writes once, nothing ever asked for it again.
+        """
+        calls = []
+
+        def writer(rgb):
+            calls.append(rgb)
+            return len(calls) >= 3  # the first two attempts do not land
+
+        engine = Engine(AppState(), writer, interval=0.005)
+        engine.set_mode("manual")
+        engine.set_colour((10, 20, 30))
+        engine.start()
+        time.sleep(0.15)
+        engine.stop()
+
+        # Three, exactly: two failures retried, and no fourth attempt after the
+        # one that succeeded.
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(rgb == (10, 20, 30) for rgb in calls))
+
+    def test_battery_mode_follows_the_live_level_in_appstate(self):
+        """The wiring, not the maths.
+
+        colour_for already knew how to render a battery level and MODES already
+        advertised the mode; nothing put the live level in front of it.
+        DeviceManager publishes battery into AppState from every input report,
+        and Engine never read AppState at all, so battery mode rendered as plain
+        manual on every real run. Driven here through AppState exactly as the
+        device does it, not through a hand-built settings dict.
+        """
+        state = AppState()
+        engine = Engine(state, recording_writer([]), interval=0.005)
+        engine.set_mode("battery")
+        state.update(battery=0)
+        engine.start()
+        try:
+            time.sleep(0.08)
+            empty = state.snapshot()["rgb"]
+            state.update(battery=100)
+            time.sleep(0.08)
+            full = state.snapshot()["rgb"]
+        finally:
+            engine.stop()
+
+        self.assertGreater(empty[0], 200, "an empty battery must read red")
+        self.assertLess(empty[1], 60)
+        self.assertGreater(full[1], 200, "a full battery must read green")
+        self.assertLess(full[0], 60)
+
+
+class TestEngineAgainstTheRealWriter(unittest.TestCase):
+    """The seam itself, with no fake standing in for DeviceManager.
+
+    Two tests on this boundary used to encode opposite contracts: an engine test
+    whose fake raised, and a device test whose docstring said write_colour
+    returns False instead. Only one of them described the shipped code.
+    """
+
+    def test_write_colour_reports_failure_by_returning_false(self):
+        manager = DeviceManager(AppState())  # never started: no device
+
+        self.assertFalse(manager.write_colour((1, 2, 3)),
+                         "the engine's success gate reads this return value")
+
+    def test_the_engine_never_marks_a_write_colour_failure_as_delivered(self):
+        manager = DeviceManager(AppState())  # never started: no device
+        engine = Engine(AppState(), manager.write_colour, interval=0.005)
+        engine.set_mode("manual")
+        engine.set_colour((7, 7, 7))
+        engine.start()
+        time.sleep(0.1)
+        engine.stop()
+
+        self.assertIsNone(engine._last_written,
+                          "nothing reached a device, so nothing is written")
+        self.assertEqual(manager.describe()["last_error"], "no device connected")
+        # The intent is still recorded, so the next connect resends it rather
+        # than falling back to the default.
+        self.assertEqual(manager._last_rgb, (7, 7, 7))
+        self.assertNotEqual(manager._last_rgb, DEFAULT_RGB)
 
 
 if __name__ == "__main__":

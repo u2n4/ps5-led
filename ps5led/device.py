@@ -12,6 +12,15 @@ from . import dualshock4 as ds4
 RESCAN_SECONDS = 2.0
 READ_TIMEOUT_MS = 200
 
+# The colour a freshly opened controller is given when no caller has asked for
+# one yet. It lives here, not in engine.py, because the device layer is the one
+# that needs a colour with no caller present: _connect runs before any Engine
+# exists, and --doctor never constructs an Engine at all. Engine imports this
+# same constant as its own default on purpose -- if the two diverged, every
+# connection would light the bar in one colour and the engine's first tick would
+# immediately change it to another, a visible flash on every reconnect.
+DEFAULT_RGB = (0, 170, 255)
+
 
 def choose_device(infos):
     """Prefer a DualSense, then a DualShock 4; ignore anything else."""
@@ -62,8 +71,8 @@ class DeviceManager(object):
         """Stop the reader and release the handle. A real barrier, not a hint.
 
         The join can time out while _connect is still inside a blocking step
-        (CreateFileW, HidD_GetFeature, or a write that can burn a full second
-        of timeout on a sleeping Bluetooth controller), so the _close() below
+        (CreateFileW, the calibration feature read, or a write that can burn a
+        full second of timeout on a sleeping Bluetooth pad), so the _close() below
         can run before that connect has published anything. One _close() is
         still enough, because _connect re-checks _stop *inside* self._lock
         immediately before publishing, and self._lock orders the two:
@@ -99,18 +108,25 @@ class DeviceManager(object):
 
     # -- writing -----------------------------------------------------------
     def write_colour(self, rgb):
+        """Put ``rgb`` on the lightbar. True if it reached the device.
+
+        Never raises: every failure is reported by returning False. Callers must
+        treat a falsy return as "not delivered" and ask again -- Engine does.
+        Failure here is routine rather than exceptional (the engine's very first
+        tick lands on a manager that has not connected yet, on every single
+        run), which is why it is a return value and not an exception.
+        """
         with self._lock:
             device, info, is_ds5 = self._device, self._info, self._is_ds5
             # Record the caller's intent unconditionally -- success or not --
-            # so a reconnect always resends the colour the engine most
-            # recently asked for. If this were only set on success, a colour
-            # that failed to reach a still-open device (write() raised, or no
-            # device was connected yet) would leave last_rgb pointing at an
-            # older colour; Engine already believes the newer one was
-            # delivered (it only retries when write_colour raises, and it
-            # never inspects our return value), so nothing would ever ask for
-            # it again. The next successful connect must resend the true
-            # current intent, not a stale one.
+            # so a reconnect always resends the colour most recently asked for.
+            # If this were set only on success, a colour that failed to reach a
+            # still-open device would leave _last_rgb pointing at an older one,
+            # and the reconnect would faithfully restore the wrong colour. The
+            # engine's retry does not make this redundant: the resend is what
+            # covers the gap between the connection coming back and the engine's
+            # next tick, and it is the only recovery path at all for a caller
+            # that is not the engine.
             self._last_rgb = tuple(rgb)
             if device is None:
                 # Deliberately not recorded as a write error: at startup the
@@ -127,7 +143,12 @@ class DeviceManager(object):
         except Exception as exc:
             with self._lock:
                 self._last_error = str(exc)
-            self._drop()
+            # Only this device, never "whatever is connected now": the lock was
+            # released for the write above, and the reader can drop this handle
+            # and finish a reconnect inside that window. An unconditional close
+            # here would take down the healthy new connection on behalf of a
+            # failure belonging to a handle that is already gone.
+            self._drop(device)
             return False
         with self._lock:
             self._last_error = None
@@ -158,8 +179,16 @@ class DeviceManager(object):
         with self._lock:
             self._last_write_error = None
 
-    def _close(self):
+    def _close(self, only=None):
+        """Release the connection. With ``only``, release it just if it is that one.
+
+        The identity test lives inside the critical section rather than in the
+        caller, because a caller that checked first and closed after would leave
+        a window for the reader to reconnect between the two.
+        """
         with self._lock:
+            if only is not None and self._device is not only:
+                return
             device, self._device, self._info = self._device, None, None
             self._scales = None
         if device is not None:
@@ -169,8 +198,8 @@ class DeviceManager(object):
                 pass
         self._state.update(connected=False, transport=None, product=None)
 
-    def _drop(self):
-        self._close()
+    def _drop(self, device):
+        self._close(only=device)
 
     def _connect(self):
         from .hid_win import HidDevice, enumerate_devices
@@ -196,18 +225,51 @@ class DeviceManager(object):
                 return False
             is_ds5 = info.product_id in ds.PRODUCT_IDS
             scales = None
+            # None unless the calibration read is the thing that went wrong.
+            # Carried all the way to the publish below instead of being
+            # discarded: this read is what switches a Bluetooth DualSense out of
+            # its reduced report, so its failure is the most diagnostic event on
+            # the transport nobody has tested yet, and --doctor has to be able
+            # to name it. The two failures are told apart because they mean
+            # opposite things -- "refused" is the driver or another process
+            # saying no, "implausible" is a report that arrived and did not
+            # decode, which points at the layout, not the transport.
+            calibration_error = None
             if is_ds5:
                 # This read yields the gyro scale AND switches a Bluetooth
                 # DualSense out of its reduced 10-byte report into the full
                 # 0x31 report.
                 raw = device.get_feature(ds.FEATURE_CALIBRATION, ds.CALIBRATION_SIZE)
-                scales = ds.parse_calibration(raw) if raw else None
+                if raw is None:
+                    calibration_error = (
+                        "calibration feature report %#04x refused: %s"
+                        % (ds.FEATURE_CALIBRATION, device.last_error))
+                else:
+                    scales = ds.parse_calibration(raw)
+                    if scales is None:
+                        calibration_error = (
+                            "calibration feature report %#04x returned implausible "
+                            "data (%d bytes): %s"
+                            % (ds.FEATURE_CALIBRATION, len(raw), raw.hex()))
                 # One setup packet per connection, or RGB is ignored while the
                 # controller finishes its power-on animation.
                 self._write_packet(device, ds.build_output(
                     info.transport, info.output_length, lightbar_setup=True, seq=0))
-            # Resend the engine's current colour BEFORE publishing self._device.
-            # Two reasons, both fixed by the ordering alone:
+            # Always follow the setup packet with a colour, and always before
+            # publishing self._device.
+            #
+            # Unconditionally, because the setup packet above is
+            # LIGHTBAR_SETUP_LIGHT_OUT: it takes the bar OUT of the boot
+            # animation by turning it off, and nothing turns it back on. A
+            # caller that never writes a colour -- --doctor is exactly that --
+            # would otherwise connect, report success, and leave the lightbar
+            # dark, which is the failure this whole branch exists to end. The
+            # Linux driver does the same thing for the same reason:
+            # dualsense_probe() calls dualsense_reset_leds() and then
+            # dualsense_set_lightbar() on the very next line.
+            #
+            # Before publishing, for two more reasons fixed by the ordering
+            # alone:
             #   - HidDevice allows at most one thread inside write() at a time
             #     (its OVERLAPPED is per call, its events are per instance).
             #     Publishing first would let the engine thread enter write()
@@ -219,14 +281,14 @@ class DeviceManager(object):
             #     overwritten by this older one.
             # While self._device is still None, write_colour returns early, so
             # this is provably the only writer.
-            seq = 0
             with self._lock:
-                last_rgb = self._last_rgb
-                if last_rgb is not None:
-                    self._seq = (self._seq + 1) & 0x0F
-                    seq = self._seq
-            if last_rgb is not None:
-                self._write_packet(device, self._build_packet(info, is_ds5, last_rgb, seq))
+                # DEFAULT_RGB only until a caller has expressed an intent; from
+                # then on the reconnect resend is that intent's sole recovery
+                # path, so it has to win over the default.
+                last_rgb = self._last_rgb if self._last_rgb is not None else DEFAULT_RGB
+                self._seq = (self._seq + 1) & 0x0F
+                seq = self._seq
+            self._write_packet(device, self._build_packet(info, is_ds5, last_rgb, seq))
             with self._lock:
                 # Re-checked under the lock, not before it: see stop()'s
                 # docstring for why this ordering is what makes stop() a
@@ -235,7 +297,12 @@ class DeviceManager(object):
                     return False
                 self._device, self._info = device, info
                 self._is_ds5, self._scales = is_ds5, scales
-                self._last_error = None
+                # Normally None, which clears whatever the failed attempts
+                # before this one left behind. When the calibration read is the
+                # one thing that did not work, this is the only place that
+                # reason survives -- the connection succeeded, so nothing later
+                # will fail and record it.
+                self._last_error = calibration_error
                 # Published in the same critical section as the handle, not
                 # after it: _close() drops the handle under this lock and only
                 # then announces connected=False, so an update left outside
@@ -283,7 +350,7 @@ class DeviceManager(object):
             except Exception as exc:
                 with self._lock:
                     self._last_error = str(exc)
-                self._drop()
+                self._drop(device)
                 self._stop.wait(RESCAN_SECONDS)
                 continue
             if not data:
