@@ -205,13 +205,27 @@ try {
 try { Invoke-WebRequest -Uri "$RawBase/assets/app.ico" -OutFile $IcoFile } catch { Write-Warn "Icon download skipped." }
 Write-Ok "Downloaded to $InstallDir"
 
-# --- 3. Install dependencies -------------------------------------------------
-# --no-cache-dir keeps pip from writing a wheel cache to disk;
-# no pip self-upgrade needed for the two viewer dependencies.
-Write-Step "Installing embedded viewer dependencies (PyOpenGL, pyopengltk) ..."
-& $py -m pip install --user -r $ReqFile --quiet --no-cache-dir --no-warn-script-location
-if ($LASTEXITCODE -ne 0) { throw "Viewer dependency installation failed (pip exit $LASTEXITCODE)." }
-Write-Ok "Dependencies installed"
+# --- 3. Optional: the hardware-accelerated 3D viewer -------------------------
+# The app REQUIRES nothing. Controller access is the Windows HID driver through
+# ctypes, and the preview falls back to the built-in drawing on its own. These
+# two packages only upgrade that preview to the real 3D model.
+#
+# So this is best effort and never fatal. It used to install from
+# requirements.txt (which now carries no packages at all, by design) and to
+# throw when pip returned non-zero -- which turned "a pip package did not land"
+# into "the install failed", the exact failure that used to leave the lightbar
+# dead after a PowerShell install.
+#
+# --no-cache-dir keeps pip from leaving a wheel cache behind.
+Write-Step "Installing the optional 3D viewer (PyOpenGL, pyopengltk) ..."
+& $py -m pip install --user --quiet --no-cache-dir --no-warn-script-location `
+    "PyOpenGL==3.1.10" "pyopengltk==0.0.4"
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "3D viewer ready"
+} else {
+    Write-Warn "Optional 3D viewer not installed. The app still works and still"
+    Write-Warn "drives the lightbar; the preview uses the built-in drawing."
+}
 
 # --- 4. Create Desktop shortcut ----------------------------------------------
 Write-Step "Creating Desktop shortcut ..."
