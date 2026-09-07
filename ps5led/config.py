@@ -56,7 +56,15 @@ def load(path=None):
         return merged
     if not isinstance(stored, dict):
         return merged
-    merged.update(stored)
+    # One level deep, because the defaults are one level deep. A plain
+    # update() replaced whole sub-objects, so a stored {"window":
+    # {"fullscreen": true}} dropped width and height and left every reader
+    # depending on its own fallback to survive the gap.
+    for key, value in stored.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key].update(value)
+        else:
+            merged[key] = value
     return merged
 
 
@@ -64,13 +72,30 @@ def save(cfg, path=None):
     """Write as UTF-8 with no BOM. Never raises: losing a preference is
     acceptable, crashing the app on shutdown is not."""
     target = pathlib.Path(path) if path is not None else config_path()
+    tmp = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(cfg, indent=1, ensure_ascii=False, sort_keys=True)
-        with open(str(target), "w", encoding="utf-8", newline="\n") as fh:
+        # Inside the guard: with_name() validates, so a path carrying an
+        # embedded NUL raises here rather than at import of the value.
+        tmp = target.with_name(target.name + ".tmp")
+        # Write beside the target, then rename over it. os.replace is atomic on
+        # Windows and POSIX alike, so a reader never sees a half-written file
+        # and a crash mid-write leaves the previous config intact. Truncating
+        # in place could destroy every saved preference -- which load() would
+        # then silently replace with defaults -- and this module is throttled
+        # precisely because a crash mid-write is expected.
+        with open(str(tmp), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(str(tmp), str(target))
     except Exception:
-        pass
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 class Config(object):
@@ -85,9 +110,13 @@ class Config(object):
         self._dirty = False
 
     def get(self, key, default=None):
+        # Deep-copied on BOTH paths. Returning the live object on the hit path
+        # let a caller mutate stored state without going through set(), which
+        # also left _dirty False, so flush() skipped the write and the change
+        # survived in memory and vanished on restart.
         with self._lock:
             if key in self._values:
-                return self._values[key]
+                return copy.deepcopy(self._values[key])
         if key in DEFAULTS:
             return copy.deepcopy(DEFAULTS[key])
         return default

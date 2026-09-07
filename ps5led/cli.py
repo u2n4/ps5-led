@@ -171,7 +171,17 @@ def run_window(mode=None, colour=None, speed=None, port=0, open_browser=True):
                 bridge.url,
                 fullscreen=bool(window.get("fullscreen")),
                 size=(window.get("width", 1280), window.get("height", 800)))
-            launcher.wait_for_close(process)
+            if process is None:
+                # No Edge or Chrome, so launcher fell back to the default
+                # browser and there is no process whose exit means "the user
+                # closed the window". Waiting on nothing returned instantly and
+                # the finally below tore the bridge down under the page that
+                # had just opened: exit 0, no error, dead app.
+                print("Opened in the default browser. Ctrl+C to stop.")
+                while True:
+                    time.sleep(0.5)
+            else:
+                launcher.wait_for_close(process)
         else:
             while True:
                 time.sleep(0.5)

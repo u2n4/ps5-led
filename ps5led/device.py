@@ -71,7 +71,12 @@ def clamp_rgb(rgb):
     for channel in (r, g, b):
         try:
             value = int(round(float(channel)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError is the one that got through: float('inf'), and any
+            # int too large to become a float, raise it rather than ValueError.
+            # JSON's Infinity literal is accepted by json.load, so a hand-edited
+            # config could reach here and make write_colour raise in spite of
+            # its documented "never raises" contract.
             return None
         out.append(max(0, min(255, value)))
     return tuple(out)

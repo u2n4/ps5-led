@@ -25,6 +25,9 @@ from .engine import MODES
 
 WEB_ROOT = pathlib.Path(__file__).resolve().parent.parent / "web"
 TOKEN_BYTES = 16
+# A command is a few dozen bytes. The cap is what stops one request from
+# holding a handler thread open waiting for a body that never finishes.
+MAX_BODY_BYTES = 64 * 1024
 
 SHELLS = ("white", "black", "red")
 
@@ -90,7 +93,7 @@ class _Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         if query.get("t", [""])[0] != self.bridge.token:
             return False
-        expected_host = "127.0.0.1:%d" % self.bridge.port
+        expected_host = "%s:%d" % (self.bridge.host, self.bridge.port)
         if (self.headers.get("Host") or "") != expected_host:
             return False
         origin = self.headers.get("Origin")
@@ -132,6 +135,16 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send(400, json.dumps({"ok": False, "error": "malformed json"}))
+            return
+        if length < 0 or length > MAX_BODY_BYTES:
+            # A command is a few dozen bytes. An unbounded read holds a handler
+            # thread until the client sends the length it promised, and
+            # ThreadingHTTPServer gives every connection a thread of its own.
+            self._send(413, json.dumps({"ok": False, "error": "body too large"}))
+            return
+        try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except Exception:
             self._send(400, json.dumps({"ok": False, "error": "malformed json"}))
@@ -219,12 +232,20 @@ class Bridge(object):
         self._thread = None
 
     @property
+    def host(self):
+        # The guard and the URL both read this. They used to hardcode
+        # 127.0.0.1 while __init__ accepted a host and bind() honoured it,
+        # so passing anything else produced a URL nobody could load and a
+        # Host check nothing could satisfy.
+        return self._host
+
+    @property
     def port(self):
         return self._server.server_address[1] if self._server else 0
 
     @property
     def url(self):
-        return "http://127.0.0.1:%d/?t=%s" % (self.port, self.token)
+        return "http://%s:%d/?t=%s" % (self.host, self.port, self.token)
 
     @property
     def state(self):
