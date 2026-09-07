@@ -62,6 +62,27 @@ def _check_rgb(rgb):
             raise ValueError("rgb channel out of range: %r" % (channel,))
 
 
+def output_length_for(transport, reported_length):
+    """The length to BUILD an output report at, given what Windows reported.
+
+    Windows reports OutputReportByteLength, the largest output report the
+    collection declares - not the size of the report we send. Measured on real
+    hardware: a DualSense on Bluetooth reports 547 while report 0x31 is 78.
+    Passing 547 straight into build_output raises, which is exactly how
+    Bluetooth failed in the field.
+
+    Callers pad to the reported length only at the moment of writing, which
+    HidDevice.write() already does; the wire report is sized by the descriptor
+    entry for the report id in byte 0.
+
+    This lives here, beside the sizes it reasons about, because it was
+    duplicated once already and the copy that was missed shipped the bug again.
+    """
+    if transport == TRANSPORT_BT:
+        return BT_OUTPUT_SIZE
+    return reported_length
+
+
 def build_output(transport, length, rgb=None, player_leds=None, mic_led=None,
                  lightbar_setup=False, seq=0):
     """Build one DualSense output report.
