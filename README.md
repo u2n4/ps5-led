@@ -59,7 +59,7 @@ To run it again later, just paste the same line — or use the shortcut printed 
 - 🪟 **Fullscreen + tray** — runs fullscreen, minimizes to tray instead of quitting.
 - 🌌 **Animated starfield background** (toggleable).
 - 🎛️ **Headless / background mode** — drive the lightbar with no window via the CLI.
-- 🧩 **Single file, zero build step** — one `dualled_pro.py`, pure Python + Tkinter.
+- 🧩 **Original Tkinter app** — settings and profiles stay in `dualled_pro.py`; the embedded OpenGL viewer uses PyOpenGL and pyopengltk. Windows HID uses the standard library only.
 
 > **Scope, honestly:** PS5 LED is focused on **lighting, battery, and presets**. It is *not* a music-reactive / macro / scheduling suite — it does one thing and does it cleanly.
 
@@ -77,7 +77,7 @@ To run it again later, just paste the same line — or use the shortcut printed 
 
 ## 🚀 Installation
 
-> **Requires Python 3.8+** and a controller connected over **USB** (Bluetooth works too on most setups).
+> **Requires Windows and Python 3.8+** with Tkinter, plus a controller connected over **USB or Bluetooth**. The OpenGL viewer requires a working graphics driver.
 
 ```bash
 # 1. Clone
@@ -101,13 +101,13 @@ python dualled_pro.py
 **Minimal install** (just enough to run):
 
 ```bash
-pip install -U pydualsense hidapi
+pip install -r requirements.txt
 python dualled_pro.py
 ```
 
 ### Windows driver note (PS5 DualSense)
 
-For `pydualsense` to talk to a DualSense, Windows needs the **WinUSB/libusb** driver bound to the controller. The simplest path is [Zadig](https://zadig.akeo.ie/): select the DualSense device → install **WinUSB**. (PS4 / generic HID controllers usually work without this.)
+Keep the controller on the standard Windows HID driver. USB and Bluetooth access use the bundled pure-ctypes HID stack; no third-party HID package or driver replacement is required.
 
 ---
 
@@ -167,7 +167,7 @@ PRs and issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Good firs
 
 ## 🙏 Acknowledgements
 
-Built on [`pydualsense`](https://github.com/flok/pydualsense), [`hidapi`](https://github.com/trezor/cython-hidapi). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
+The embedded viewer uses PyOpenGL and pyopengltk; device access uses Windows HID through ctypes. The 3D model is **PS5 Controller by Taohid Animation**, **CC BY 4.0**; see [ATTRIBUTION.md](ATTRIBUTION.md). Not affiliated with or endorsed by Sony. PlayStation, DualSense, and DualShock are trademarks of Sony Interactive Entertainment.
 
 ---
 
@@ -249,11 +249,11 @@ python dualled_pro.py
 **تثبيت سريع** (أقل شي يكفي للتشغيل):
 
 ```bash
-pip install -U pydualsense hidapi
+pip install -r requirements.txt
 python dualled_pro.py
 ```
 
-> **ملاحظة درايفر ويندوز (يد PS5 DualSense):** عشان مكتبة `pydualsense` تكلّم اليد، ويندوز يحتاج درايفر **WinUSB/libusb** مربوط باليد. أسهل طريقة عبر [Zadig](https://zadig.akeo.ie/): اختر جهاز DualSense ← ثبّت **WinUSB**. (يد PS4 / الأجهزة العامة غالباً تشتغل بدون هذا.)
+> **درايفر ويندوز:** خلّ اليد على تعريف Windows HID الأصلي. الاتصال عبر USB وBluetooth يستخدم كود ctypes المرفق؛ ما يحتاج مكتبة HID إضافية أو تبديل التعريف.
 
 ---
 
@@ -313,6 +313,23 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 
 ### 🙏 شكر
 
-مبني على [`pydualsense`](https://github.com/flok/pydualsense) و [`hidapi`](https://github.com/trezor/cython-hidapi). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
+العارض المدمج يستخدم PyOpenGL وpyopengltk، والاتصال باليد يستخدم Windows HID عبر ctypes. نموذج **PS5 Controller** من **Taohid Animation** بترخيص **CC BY 4.0**؛ التفاصيل في [ATTRIBUTION.md](ATTRIBUTION.md). غير تابع لشركة Sony ولا معتمد منها. PlayStation و DualSense و DualShock علامات تجارية لـ Sony Interactive Entertainment.
 
 </div>
+
+
+### Embedded 3D branch and packaging
+
+This branch extends the original Tkinter window. Drag the model with the mouse or use the right analog stick to orbit it. Gyro mirroring is optional and starts off. The existing five shell palettes and lighting modes remain in the settings panel.
+
+The installer deliberately continues to download from `main` and the latest published release. Running it from this feature branch therefore does **not** install this branch. Test this checkout with `python dualled_pro.py`; publish the changed files and a rebuilt release before expecting the public installer to deliver this version.
+
+`PS5-LED.spec` packages the Tk app, native HID modules, embedded viewer, preprocessed mesh, SVG fallback, icon and attribution into one Windows executable. PyInstaller is a **build-only** dependency; it is not required to run the Python app. A successful build alone does not verify rendering or controller operation: launch the built executable and check both before publishing it.
+
+### فرع العرض ثلاثي الأبعاد والتغليف
+
+هذا الفرع يطوّر نافذة Tkinter الأصلية. اسحب المجسم بالماوس أو استخدم العصا اليمنى لتدويره. تتبّع الجايرو اختياري ومطفأ عند البداية. ألوان الهيكل الخمسة وأوضاع الإضاءة تبقى ضمن الإعدادات الحالية.
+
+المثبّت ما زال يحمّل من `main` وآخر إصدار منشور؛ تشغيله من هذا الفرع **ما يثبّت نسخة الفرع**. جرّب النسخة المحلية عبر `python dualled_pro.py`. وصول التحديث للمثبّت العام يتطلب نشر الملفات وبناء إصدار جديد.
+
+ملف `PS5-LED.spec` يضم التطبيق والعارض والملفات المساعدة والمجسم البديل ونَسب النموذج في ملف Windows تنفيذي. PyInstaller مطلوب للبناء فقط. نجاح البناء لا يثبت عمل الرسم أو اليد؛ يلزم تشغيل الملف التنفيذي وفحصهما قبل النشر.

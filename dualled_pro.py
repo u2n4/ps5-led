@@ -314,162 +314,52 @@ def rgb_to_hex(rgb): r,g,b=[clamp(v) for v in rgb]; return f"#{r:02x}{g:02x}{b:0
 
 # --------------------------- Backend ---------------------------
 class Backend:
-    """PS5 (dualsense-controller/pydualsense) + PS4 USB (hidapi) — auto-detect"""
+    """Native Windows HID, retaining the original Tkinter backend interface."""
     def __init__(self, prefer="auto"):
-        self.prefer=prefer; self.kind=None; self.dev=None; self.ds4=None
+        from ps5led.device import DeviceManager
+        # Old saved backend names stay readable; all now use Windows' HID driver.
+        self.prefer=prefer; self.dev=None; self.ds4=None
+        self._state_lock = threading.Lock()
+        self._state = dict(connected=False, product=None, product_id=None,
+                           transport=None, battery=None, charging=False,
+                           gyro=None, accel=None, sensor_timestamp=None,
+                           right_stick=(0.0, 0.0), applied_rgb=None, applied_at=None)
+        self._manager = DeviceManager(self)
+        # Seed the boot/reconnect writes before the asynchronous reader starts.
+        self.set_color(*hex_to_rgb(CFG.get("color", "#00aaff")))
 
-    def _connect_ds4_usb(self):
-        try:
-            import hid
-        except Exception as e:
-            log(f"hidapi not available: {e}"); return False
-        try:
-            VID = 0x054C
-            PIDs = [0x05C4, 0x09CC, 0x0BA0]
-            for d in hid.enumerate(VID, 0):
-                if d.get('product_id') in PIDs:
-                    self.ds4 = hid.device()
-                    self.ds4.open_path(d['path'])
-                    self.ds4.set_nonblocking(True)
-                    self.kind = 'ds4'
-                    log(f"DS4 connected: PID={hex(d.get('product_id'))}")
-                    return True
-        except Exception as e:
-            log(f"ds4 connect fail: {e}")
-        return False
+    @property
+    def kind(self):
+        from ps5led.dualshock4 import PRODUCT_IDS
+        snap = self.snapshot()
+        if not snap["connected"]: return None
+        return "ds4" if snap["product_id"] in PRODUCT_IDS else "native"
+
+    def update(self, **values):
+        """Reader-side publication; never touches Tk widgets from its thread."""
+        with self._state_lock:
+            self._state.update(values)
+
+    def snapshot(self):
+        with self._state_lock:
+            return dict(self._state)
 
     def connect(self)->bool:
-        if self.prefer in ("auto","dualsense-controller"):
-            try:
-                import dualsense_controller as dsc
-                self.dev=dsc.DualSenseController(); self.dev.connect()
-                self.kind="dsc"; return True
-            except Exception as e: log(f"dsc connect fail: {e}")
-            if self.prefer=="dualsense-controller": return False
-        if self.prefer in ("auto","pydualsense"):
-            try:
-                from pydualsense import pydualsense as PDS
-                self.dev=PDS(); self.dev.init(); self.kind="pds"; return True
-            except Exception as e: log(f"pds connect fail: {e}")
-        if self.prefer in ("auto","ds4"):
-            if self._connect_ds4_usb():
-                return True
-        return False
+        """Start automatic connection/reconnection without blocking Tk's loop."""
+        self._manager.start()
+        return True
 
     def set_color(self, r,g,b):
-        r=int(max(0,min(255,r))); g=int(max(0,min(255,g))); b=int(max(0,min(255,b)))
+        r=clamp(r); g=clamp(g); b=clamp(b)
         if CFG.get("bgr_swap"): r,g,b = b,g,r
-        try:
-            if self.kind=="ds4":
-                try:
-                    buf = bytearray(32); buf[0]=0x05; buf[1]=0xFF; buf[6]=r; buf[7]=g; buf[8]=b
-                    self.ds4.write(bytes(buf))
-                except Exception:
-                    try:
-                        buf = bytearray(33); buf[0]=0x00; buf[1]=0x05; buf[2]=0xFF; buf[7]=r; buf[8]=g; buf[9]=b
-                        self.ds4.write(bytes(buf))
-                    except Exception as e:
-                        log(f"ds4 set_color fail: {e}")
-                return
-            if self.kind=="dsc":
-                for payload in [(r,g,b),(r/255.0,g/255.0,b/255.0)]:
-                    try: self.dev.set_light_color(*payload); return
-                    except Exception: pass
-                try: self.dev.lightbar.set_color(r,g,b); return
-                except Exception: pass
-            elif self.kind=="pds":
-                try: self.dev.light.setColorI(r,g,b); return
-                except Exception: pass
-        except Exception as e: log(f"set_color err: {e}")
-
-    # ---- battery
-    @staticmethod
-    def _norm_batt(v):
-        try:
-            if v is None or isinstance(v,bool): return None
-            if isinstance(v,(int,float)):
-                x=float(v)
-                if 0<=x<=1: return int(round(x*100))
-                if 0<=x<=10: return int(round(x*10))
-                return int(max(0,min(100,round(x))))
-            if isinstance(v,str):
-                s=v.strip().rstrip("%").strip(); return Backend._norm_batt(float(s))
-        except Exception: pass
-        return None
-
-    @staticmethod
-    def _scan_props(obj):
-        out = []
-        import inspect
-        for n in dir(obj):
-            if n.startswith("_"): continue
-            try:
-                v = getattr(obj, n)
-                if callable(v) and len(inspect.signature(v).parameters)==0:
-                    try: v=v()
-                    except Exception: continue
-                if isinstance(v,(int,float,bool,str)): out.append((n,v))
-            except Exception: continue
-        return out
+        return self._manager.write_colour((r,g,b))
 
     def get_battery(self):
-        if self.kind=="ds4" or not self.dev: return None, False
-        if self.kind=="pds":
-            try:
-                batt = getattr(self.dev, "battery", None)
-                if batt is not None:
-                    bf = CFG.get("pds_batt_field"); cf = CFG.get("pds_charge_field")
-                    if bf:
-                        try:
-                            v = getattr(batt, bf); v=v() if callable(v) else v
-                            p = Backend._norm_batt(v)
-                        except Exception: p=None
-                    else: p=None
-                    ch=False
-                    if cf:
-                        try:
-                            c=getattr(batt,cf); ch=bool(c() if callable(c) else c)
-                        except Exception: ch=False
-                    if p is None:
-                        best=None; chname=None
-                        for n,val in Backend._scan_props(batt):
-                            if Backend._norm_batt(val) is not None: best=n; break
-                        for n,val in Backend._scan_props(batt):
-                            if isinstance(val,bool): chname=n; break
-                        if best:
-                            CFG["pds_batt_field"]=best
-                            if chname: CFG["pds_charge_field"]=chname
-                            save_cfg(CFG)
-                            vv=getattr(batt,best); vv=vv() if callable(vv) else vv
-                            p=Backend._norm_batt(vv)
-                            ch=bool(getattr(batt,chname)) if chname else False
-                    return p, ch
-            except Exception as e:
-                log("pds batt err:", e)
-        # dualsense-controller أو أخرى
-        try:
-            cand=["state.battery","state.Battery","state.get_battery()","battery","get_battery()",
-                  "get_battery_level()","battery_level","battery_percentage","get_battery_percent()"]
-            ch_cand=["state.charging","state.is_charging","state.is_charging()","is_charging","charging"]
-            def _safe_get(obj, names):
-                for name in names:
-                    try:
-                        cur=obj
-                        for seg in name.split("."):
-                            if seg.endswith("()"): cur=getattr(cur, seg[:-2])()
-                            else: cur=getattr(cur, seg)
-                        return cur
-                    except Exception: continue
-                return None
-            b=_safe_get(self.dev,cand); ch=_safe_get(self.dev,ch_cand)
-            return Backend._norm_batt(b), bool(ch)
-        except Exception as e:
-            log("batt read err:", e); return None, False
+        snap = self.snapshot()
+        return snap["battery"], snap["charging"]
 
     def close(self):
-        try:
-            if self.kind=="pds": self.dev.close()
-        except Exception: pass
+        self._manager.stop()
 
 # --------------------------- EMA ---------------------------
 class EMA:
@@ -509,13 +399,16 @@ class Engine(threading.Thread):
 
     def _send(self, rgb):
         try:
-            r,g,b = rgb
-            self.b.set_color(r,g,b)
+            if not self.b.set_color(*rgb): return False
+            applied = self.b.snapshot()["applied_rgb"]
+            if applied is None: return False
             with self._ol:
-                self.out = (int(r),int(g),int(b))
+                self.out = applied
             self._last_apply = time.time()
+            return True
         except Exception as e:
             log("engine send err:", e)
+            return False
 
     def set_mode(self,m):
         # وضع غير معروف (config محرَّر يدويًا/تالف) → Manual، وإلا حلقة التشغيل تدور بلا نوم
@@ -694,9 +587,49 @@ class Starfield(tk.Canvas):
     def __init__(self, master, count=110, **kw):
         super().__init__(master, highlightthickness=0, bd=0, **kw)
         self.count=count; self.stars=[]; self.running=False; self._after=None
+        self._point_items=[]; self._link_items=[]; self._points=(); self._links=()
+        self._revision=0; self._last_tick=None; self._size=(1,1)
+        self._background=self.cget("bg")
+        rgb=self.winfo_rgb(self._background)
+        self._background_rgb=tuple(c//257 for c in rgb)
+
+    @staticmethod
+    def edge_weight(x, y, width, height):
+        """One at every edge (including side midpoints), zero in the centre."""
+        band=max(1.0, min(width,height)*0.2)
+        nearest=max(0.0, min(x,y,width-x,height-y))
+        t=max(0.0, min(1.0, 1.0-nearest/band))
+        return t*t*(3.0-2.0*t)
+
+    @staticmethod
+    def _advance(p, pointer, width, height, dt):
+        x,y,r,vx,vy=p
+        weight=Starfield.edge_weight(x,y,width,height)
+        dx=x-pointer[0]; dy=y-pointer[1]; distance=math.hypot(dx,dy)
+        # Both the particle and pointer must be at an edge. A pointer over the
+        # central settings panel cannot disturb the border from a distance.
+        pointer_weight=Starfield.edge_weight(*pointer,width,height)
+        if 0 < distance < 140 and weight > 0 and pointer_weight > 0:
+            force=5200*weight*pointer_weight*(1-distance/140)/(distance*distance+40)
+            vx+=dx/distance*force*dt; vy+=dy/distance*force*dt
+        damping=0.97**(dt*60)
+        vx*=damping; vy*=damping
+        return [(x+vx*dt*60)%width,(y+vy*dt*60)%height,r,vx,vy]
+
+    def _colour(self, rgb, alpha):
+        return rgb_to_hex(tuple(round(b+(c-b)*alpha) for b,c in zip(self._background_rgb,rgb)))
+
+    def frame_data(self):
+        """Snapshot for GL compositing; all point/link positions are screen pixels."""
+        ox,oy=self.winfo_rootx(),self.winfo_rooty()
+        return {"revision":self._revision, "background":self._background,
+                "origin":(ox,oy), "size":self._size,
+                "points":tuple((x+ox,y+oy,r,c) for x,y,r,c in self._points),
+                "links":tuple((x1+ox,y1+oy,x2+ox,y2+oy,c) for x1,y1,x2,y2,c in self._links)}
+
     def start(self):
         if self.running: return
-        self.running=True; self._schedule()
+        self.running=True; self._last_tick=None; self._schedule()
     def _schedule(self, delay=40):
         if not self.running or not self.winfo_exists(): return
         self._after=self.after(delay, self._tick)  # ~25 FPS وهو ظاهر، ~2Hz وهو خامل
@@ -713,17 +646,49 @@ class Starfield(tk.Canvas):
             # مخفي أو التطبيق بلا تركيز (داخل لعبة)؟ لا رسم — صفر استهلاك
             idle = self._idle()
             if idle:
+                self._last_tick=None
                 return
-            w=self.winfo_width(); h=self.winfo_height()
+            w=max(1,self.winfo_width()); h=max(1,self.winfo_height())
+            now=time.monotonic()
+            dt=min(0.05,now-self._last_tick) if self._last_tick is not None else 1/25
+            self._last_tick=now
+            if self._size != (w,h) and self.stars:
+                oldw,oldh=self._size
+                for p in self.stars:
+                    p[0]*=w/oldw; p[1]*=h/oldh
+            self._size=(w,h)
             if not self.stars:
                 for _ in range(self.count):
-                    x=random.random()*w; y=random.random()*h; r=random.random()*1.8+0.5; sp=random.random()*0.8+0.2
-                    self.stars.append([x,y,r,sp])
-            self.delete("all")
-            for s in self.stars:
-                s[1]+=s[3]
-                if s[1]>h: s[1]=0
-                x,y,r,_=s; self.create_oval(x-r,y-r,x+r,y+r, fill="#6f7aa7", outline="")
+                    self.stars.append([random.random()*w,random.random()*h,
+                                       random.random()*1.6+0.6,
+                                       (random.random()-0.5)*0.25,(random.random()-0.5)*0.25])
+            pointer=(self.winfo_pointerx()-self.winfo_rootx(),self.winfo_pointery()-self.winfo_rooty())
+            if not (0 <= pointer[0] <= w and 0 <= pointer[1] <= h):
+                pointer=(-1e6,-1e6)
+            self.stars=[self._advance(p,pointer,w,h,dt) for p in self.stars]
+            weights=[self.edge_weight(p[0],p[1],w,h) for p in self.stars]
+            points=[]; links=[]
+            for i,(x,y,r,_,_) in enumerate(self.stars):
+                colour=self._colour((140,170,220),0.18+weights[i]*0.35)
+                points.append((x,y,r,colour))
+                if i == len(self._point_items):
+                    self._point_items.append(self.create_oval(0,0,0,0,outline="",tags="stars"))
+                item=self._point_items[i]
+                self.coords(item,x-r,y-r,x+r,y+r); self.itemconfigure(item,fill=colour)
+                for j in range(i):
+                    q=self.stars[j]; distance=math.hypot(x-q[0],y-q[1])
+                    if distance >= 110: continue
+                    alpha=(1-distance/110)*0.16*(0.3+max(weights[i],weights[j]))
+                    links.append((x,y,q[0],q[1],self._colour((120,160,215),alpha)))
+            for i,(x1,y1,x2,y2,colour) in enumerate(links):
+                if i == len(self._link_items):
+                    self._link_items.append(self.create_line(0,0,0,0,width=1,tags="links"))
+                item=self._link_items[i]
+                self.coords(item,x1,y1,x2,y2); self.itemconfigure(item,fill=colour,state="normal")
+            for item in self._link_items[len(links):]:
+                self.itemconfigure(item,state="hidden")
+            self.tag_lower("links")
+            self._points=tuple(points); self._links=tuple(links); self._revision+=1
         finally:
             self._schedule(500 if idle else 40)
     def stop(self):
@@ -1166,6 +1131,164 @@ def display_to_code(lang, disp):
 
 
 # --------------------------- Tray icon (Win32, stdlib only) ---------------------------
+
+class ControllerView(ttk.Frame):
+    """The controller preview: OpenGL when it can run, the Canvas when it cannot.
+
+    Two reasons this indirection exists rather than swapping Controller3D out.
+
+    First, OpenGL here is optional by construction. PyOpenGL and pyopengltk are
+    pip packages, and a pip package that fails to install is precisely why the
+    lightbar used to go dead after a PowerShell install -- so a missing import,
+    a missing mesh, or a context that never comes up must degrade to the drawing
+    this app has always had, never stop it starting.
+
+    Second, the two widgets share no interface and the whole app is written
+    against the Canvas. So this keeps the Canvas's contract exactly --
+    set_led_color, set_shell, set_mode, set_controller_type, redraw, on_click --
+    and translates for the GL side. Every call site upstream is unchanged.
+    """
+
+    def __init__(self, master, controller_type="ps5", width=680, height=260,
+                 bg="#0b0f14", **kw):
+        super().__init__(master, style="Card.TFrame")
+        self._kw = dict(width=width, height=height, bg=bg)
+        self._ctype = controller_type
+        self._shell = "white"
+        self._led = (0, 170, 255)
+        self._mode = "Manual"
+        self._press_xy = None
+        self.on_click = None          # set by App after construction
+        self.gl = None
+        self.canvas = None
+        self.backend = "canvas"
+        if not self._start_gl():
+            self._start_canvas()
+
+    # -- construction -----------------------------------------------------
+    def _palette(self):
+        return _DS_SHELLS.get(self._shell, _DS_SHELLS["white"])
+
+    def _start_gl(self):
+        """True if the OpenGL preview is up. Never raises."""
+        try:
+            from controller_gl import ControllerGL
+        except Exception as exc:                      # ImportError, and any
+            self._gl_error = exc                      # OpenGL loader failure
+            return False
+        try:
+            self.gl = ControllerGL(self, self._palette(), self._led,
+                                   self._on_gl_failure,
+                                   width=self._kw["width"],
+                                   height=self._kw["height"])
+        except Exception as exc:
+            # load_mesh runs before the widget exists, so a missing or corrupt
+            # assets/dualsense.mesh.json.gz lands here.
+            self._gl_error = exc
+            self.gl = None
+            return False
+        self.gl.pack(fill="both", expand=True)
+        # A click must still open the colour picker, but Button-1 already
+        # drives the orbit. Bind alongside it (add="+") and treat a release
+        # that never moved as a click.
+        self.gl.bind("<ButtonPress-1>", self._gl_press, add="+")
+        self.gl.bind("<ButtonRelease-1>", self._gl_release, add="+")
+        self.backend = "gl"
+        return True
+
+    def _start_canvas(self):
+        self.canvas = Controller3D(self, controller_type=self._ctype, **self._kw)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.on_click = self._fire_click
+        self.canvas.set_led_color(*self._led)
+        if self._shell != "white":
+            self.canvas.set_shell(self._shell)
+        self.canvas.set_mode(self._mode)
+        self.backend = "canvas"
+
+    def _on_gl_failure(self, exc):
+        """The GL context died after starting. Swap in the Canvas, keep running."""
+        self._gl_error = exc
+        try:
+            if self.gl is not None:
+                self.gl.destroy()
+        except Exception:
+            pass
+        self.gl = None
+        if self.canvas is None:
+            self._start_canvas()
+
+    # -- clicks -----------------------------------------------------------
+    def _gl_press(self, event):
+        self._press_xy = (event.x, event.y)
+
+    def _gl_release(self, event):
+        start, self._press_xy = self._press_xy, None
+        if start is None:
+            return
+        # A drag is an orbit, not a click. Three pixels of slop covers a shaky
+        # press without swallowing a real one.
+        if abs(event.x - start[0]) <= 3 and abs(event.y - start[1]) <= 3:
+            self._fire_click(event)
+
+    def _fire_click(self, event=None):
+        if callable(self.on_click):
+            self.on_click(event)
+
+    # -- the Canvas's contract, forwarded --------------------------------
+    def set_led_color(self, r, g, b):
+        self._led = (int(r), int(g), int(b))
+        if self.gl is not None:
+            self.gl.set_scene(self._palette(), self._led)
+        elif self.canvas is not None:
+            self.canvas.set_led_color(*self._led)
+
+    def set_shell(self, key):
+        if key not in _DS_SHELLS or key == self._shell:
+            return
+        self._shell = key
+        if self.gl is not None:
+            self.gl.set_scene(self._palette(), self._led)
+        elif self.canvas is not None:
+            self.canvas.set_shell(key)
+
+    def set_mode(self, code):
+        self._mode = code or "Manual"
+        if self.canvas is not None:
+            self.canvas.set_mode(self._mode)
+
+    def set_controller_type(self, ctype):
+        self._ctype = ctype
+        if self.canvas is not None:
+            self.canvas.set_controller_type(ctype)
+
+    def redraw(self):
+        if self.gl is not None:
+            self.gl.request_draw()
+        elif self.canvas is not None:
+            self.canvas.redraw()
+
+    # -- the GL side's extra input ---------------------------------------
+    def update_inputs(self, sample, background=None):
+        """Feed the orbit: gyro, the right stick, and the background to composite.
+
+        Canvas-only builds ignore this -- the flat drawing has no camera.
+        """
+        if self.gl is not None:
+            try:
+                self.gl.update_inputs(sample, background)
+            except Exception as exc:
+                self._on_gl_failure(exc)
+
+    def set_gyro_enabled(self, enabled):
+        if self.gl is not None:
+            self.gl.orbit.gyro_enabled = bool(enabled)
+
+    def reset_view(self):
+        if self.gl is not None:
+            self.gl.orbit.reset()
+            self.gl.request_draw()
+
 class TrayIcon:
     """أيقونة بجانب الساعة عبر Shell_NotifyIcon مباشرة — بدون أي مكتبات إضافية.
     كليك يسار = فتح البرنامج. كليك يمين = قائمة: بروفايلات + إطفاء + خروج.
@@ -1490,7 +1613,7 @@ class App(tk.Tk):
         preview_frame.pack(padx=20, pady=(16, 8), fill="x")
 
         # يد 3D
-        self.ctrl3d = Controller3D(preview_frame, controller_type="ps5", width=680, height=260, bg=CARD)
+        self.ctrl3d = ControllerView(preview_frame, controller_type="ps5", width=680, height=260, bg=CARD)
         self.ctrl3d.pack(fill="x", expand=True)
         # نقرة على اليد = منتقي الألوان الحي
         self.ctrl3d.on_click = self.pick_color
@@ -1722,6 +1845,16 @@ class App(tk.Tk):
                 # --- تزامن 100% مع يد التحكم المعروضة ---
                 if hasattr(self, 'ctrl3d'):
                     self.ctrl3d.set_led_color(*out)
+                    # The orbit needs the controller itself: the right stick
+                    # turns the model, and the gyro does too when it is on.
+                    # Same 33 ms tick, so nothing new is polled.
+                    if hasattr(self.ctrl3d, 'update_inputs') and self.b is not None:
+                        try:
+                            self.ctrl3d.update_inputs(
+                                self.b.snapshot(),
+                                self.bg.frame_data() if hasattr(self, 'bg') else None)
+                        except Exception:
+                            pass
         except Exception: pass
         self.after(400 if hidden else 33, self.sync_preview_tick)
 
