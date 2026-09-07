@@ -89,7 +89,19 @@ button {
 button:hover { background: rgba(255,255,255,.10); }
 button[aria-pressed="true"] { background: var(--accent); color: #04121d; border-color: transparent; }
 
+/* A saved profile's load and delete buttons stay paired as one unit when
+   the row wraps, instead of drifting apart at the row's own gap. */
+.profile { display: inline-flex; gap: 4px; }
+
 input[type="range"] { flex: 1; min-width: 140px; accent-color: var(--accent); }
+input[type="text"] {
+  background: rgba(255,255,255,.05);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+}
 input[type="color"] {
   width: 44px; height: 32px; padding: 0; cursor: pointer;
   background: none; border: 1px solid var(--edge); border-radius: 8px;
