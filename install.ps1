@@ -1,7 +1,7 @@
 # ============================================================
 #  PS5 LED - one-shot installer for Windows (PowerShell)
 #  Preferred path: portable single EXE (NO Python needed).
-#  Fallback path : Python (minimal footprint) + 3 small deps.
+#  Fallback path : Python + two embedded OpenGL viewer packages.
 #  Usage (paste in PowerShell):
 #    irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 # ============================================================
@@ -186,9 +186,18 @@ Write-Ok ("Using " + (& $py --version 2>&1))
 Write-Step "Downloading PS5 LED ..."
 Invoke-WebRequest -Uri "$RawBase/dualled_pro.py"   -OutFile $AppFile
 Invoke-WebRequest -Uri "$RawBase/requirements.txt" -OutFile $ReqFile
-# DualSense SVG asset - required for the accurate PS5 controller view.
+# Keep the native HID package with the Tk application; no driver package needed.
+$HidDir = Join-Path $InstallDir "ps5led"
+New-Item -ItemType Directory -Force -Path $HidDir | Out-Null
+foreach ($module in @("__init__", "hid_win", "dualsense", "dualshock4", "crc", "device")) {
+    Invoke-WebRequest -Uri "$RawBase/ps5led/$module.py" -OutFile (Join-Path $HidDir "$module.py")
+}
+Invoke-WebRequest -Uri "$RawBase/controller_gl.py" -OutFile (Join-Path $InstallDir "controller_gl.py")
+Invoke-WebRequest -Uri "$RawBase/ATTRIBUTION.md" -OutFile (Join-Path $InstallDir "ATTRIBUTION.md")
 $AssetsDir = Join-Path $InstallDir "assets"
 New-Item -ItemType Directory -Force -Path $AssetsDir | Out-Null
+Invoke-WebRequest -Uri "$RawBase/assets/dualsense.mesh.json.gz" -OutFile (Join-Path $AssetsDir "dualsense.mesh.json.gz")
+# SVG is retained for the existing fallback when OpenGL is unavailable.
 try {
     Invoke-WebRequest -Uri "$RawBase/assets/dualsense-svgrepo.svg" -OutFile (Join-Path $AssetsDir "dualsense-svgrepo.svg")
 } catch { Write-Warn "DualSense SVG skipped (app falls back to the generic view)." }
@@ -198,9 +207,10 @@ Write-Ok "Downloaded to $InstallDir"
 
 # --- 3. Install dependencies -------------------------------------------------
 # --no-cache-dir keeps pip from writing a wheel cache to disk;
-# no pip self-upgrade - the bundled pip installs these 3 small packages fine.
-Write-Step "Installing dependencies (psutil, hidapi, pydualsense) ..."
+# no pip self-upgrade needed for the two viewer dependencies.
+Write-Step "Installing embedded viewer dependencies (PyOpenGL, pyopengltk) ..."
 & $py -m pip install --user -r $ReqFile --quiet --no-cache-dir --no-warn-script-location
+if ($LASTEXITCODE -ne 0) { throw "Viewer dependency installation failed (pip exit $LASTEXITCODE)." }
 Write-Ok "Dependencies installed"
 
 # --- 4. Create Desktop shortcut ----------------------------------------------

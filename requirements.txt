@@ -1,12 +1,16 @@
 # DualLED Pro — runtime dependencies
-# Python 3.8+. The UI uses Tkinter, which ships with most Python installs
-# (on Debian/Ubuntu: `sudo apt install python3-tk`).
-
-# PS4 / generic HID controller access (DualShock 4)
-hidapi>=0.12.0
-
-# PS5 DualSense access (primary)
-pydualsense>=0.6.0
-
-# PS5 DualSense access (alternative backend, optional — auto-detected if present)
-# dualsense-controller>=1.0.0
+#
+# The app itself needs NOTHING here. Python 3.8+ and Tkinter (which ships with
+# most Python installs; on Debian/Ubuntu: `sudo apt install python3-tk`).
+# Controller access is the Windows HID driver through ctypes — no third-party
+# package, which is the point: a pip package that failed to install after a
+# PowerShell install is why the lightbar used to go dead.
+#
+# OPTIONAL — the hardware-accelerated 3D preview only.
+# Without these the app still runs and still drives the lightbar; the preview
+# falls back to the built-in Canvas drawing and says so in the log.
+#
+#   pip install PyOpenGL==3.1.10 pyopengltk==0.0.4
+#
+# They are deliberately NOT required here so that `pip install -r
+# requirements.txt` failing can never again take the lightbar down with it.
