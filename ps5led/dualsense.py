@@ -183,7 +183,10 @@ def parse_input(data):
         accel_raw=(i16(_ACCEL), i16(_ACCEL + 2), i16(_ACCEL + 4)),
         timestamp=struct.unpack_from("<I", data, body + _TIMESTAMP)[0],
         touch=(_touch_point(data, body + _TOUCH), _touch_point(data, body + _TOUCH + 4)),
-        battery_percent=min(100, (status & 0x0F) * 10),
+        # The +5 is the kernel's, not a rounding flourish: the controller
+        # reports a 0..10 capacity step, so hid-playstation reads each step as
+        # the middle of the 10-point band it stands for rather than its floor.
+        battery_percent=min((status & 0x0F) * 10 + 5, 100),
         charge_state=status >> 4,
     )
 

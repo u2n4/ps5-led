@@ -82,11 +82,23 @@ def main():
     with dev:
         scales = None
         if is_ds5:
+            # Three outcomes, not two. "unavailable (None)" -- what this printed
+            # when the read succeeded and parse_calibration rejected the data --
+            # named neither the failure nor the reason, and this is the one read
+            # whose failure explains a Bluetooth pad stuck in its reduced report.
             raw = dev.get_feature(ds.FEATURE_CALIBRATION, ds.CALIBRATION_SIZE)
-            scales = ds.parse_calibration(raw) if raw else None
-            print("calibration: %s"
-                  % ("scales %s" % (scales,) if scales
-                     else "unavailable (%s)" % dev.last_error))
+            if raw is None:
+                scales = None
+                print("calibration: feature report %#04x refused (%s)"
+                      % (ds.FEATURE_CALIBRATION, dev.last_error))
+            else:
+                scales = ds.parse_calibration(raw)
+                if scales is None:
+                    print("calibration: feature report %#04x returned implausible "
+                          "data (%d bytes): %s"
+                          % (ds.FEATURE_CALIBRATION, len(raw), raw.hex()))
+                else:
+                    print("calibration: scales %s" % (scales,))
 
             setup = ds.build_output(info.transport, info.output_length,
                                     lightbar_setup=True, seq=0)
@@ -130,10 +142,19 @@ def main():
                     break
                 if not data:
                     continue
-                if len(data) == 10:
-                    print("\rgot the reduced 10-byte report -- the calibration "
-                          "read did not switch this controller into the full "
-                          "report                                  ", end="")
+                # Test the report id, not the length. The Windows HID class
+                # driver pads every short input report up to
+                # InputReportByteLength, so the reduced Bluetooth report does
+                # not arrive as 10 bytes -- it arrives as 78, and only its id
+                # (0x01 rather than the full report's 0x31) still gives it away.
+                # A length test here could never fire, which would have left the
+                # Bluetooth bring-up nobody has done yet with no message at all.
+                if (info.transport == ds.TRANSPORT_BT
+                        and data[0] != ds.INPUT_REPORT_BT):
+                    print("\rgot report id %#04x, not the full %#04x -- the "
+                          "calibration read did not switch this controller into "
+                          "full reports          " % (data[0], ds.INPUT_REPORT_BT),
+                          end="")
                     continue
                 state = ds.parse_input(data)
                 if state is None:

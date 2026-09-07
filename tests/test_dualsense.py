@@ -203,13 +203,17 @@ class TestParseInput(unittest.TestCase):
         state = ds.parse_input(make_usb_input(timestamp=0xFFFFFFFF))
         self.assertEqual(state.timestamp, 0xFFFFFFFF)
 
-    def test_battery_low_nibble_times_ten(self):
+    def test_battery_full_step_saturates_at_a_hundred(self):
         state = ds.parse_input(make_usb_input(status=0x2A))
         self.assertEqual(state.battery_percent, 100)
         self.assertEqual(state.charge_state, 0x2)
 
-    def test_battery_partial(self):
-        self.assertEqual(ds.parse_input(make_usb_input(status=0x05)).battery_percent, 50)
+    def test_battery_step_reads_as_the_middle_of_its_band(self):
+        # hid-playstation: min(capacity * 10 + 5, 100). The controller reports a
+        # 0..10 step, so step 5 means "somewhere in 50-59 %", and the kernel
+        # answers with the middle of that band rather than its floor.
+        self.assertEqual(ds.parse_input(make_usb_input(status=0x05)).battery_percent, 55)
+        self.assertEqual(ds.parse_input(make_usb_input(status=0x00)).battery_percent, 5)
 
     def test_touch_absent_by_default(self):
         state = ds.parse_input(make_usb_input())
