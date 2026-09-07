@@ -100,7 +100,8 @@ def main():
                 else:
                     print("calibration: scales %s" % (scales,))
 
-            setup = ds.build_output(info.transport, info.output_length,
+            setup = ds.build_output(info.transport,
+                                    ds.output_length_for(info.transport, info.output_length),
                                     lightbar_setup=True, seq=0)
             try:
                 dev.write(setup)
@@ -113,7 +114,8 @@ def main():
         for name, rgb in (("red", (255, 0, 0)), ("green", (0, 255, 0)),
                           ("blue", (0, 0, 255)), ("restored", (0, 170, 255))):
             if is_ds5:
-                packet = ds.build_output(info.transport, info.output_length,
+                packet = ds.build_output(info.transport,
+                                    ds.output_length_for(info.transport, info.output_length),
                                          rgb=rgb, seq=seq)
             else:
                 packet = ds4.build_output(info.transport, rgb)
