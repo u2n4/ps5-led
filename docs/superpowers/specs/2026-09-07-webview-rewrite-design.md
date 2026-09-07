@@ -362,7 +362,7 @@ button glows, a stick tilts, a finger shows as a dot on the touchpad. That is
 what makes the model read as live rather than as a screensaver.
 
 **`particles.js`** — a full-window 2D canvas behind everything, `pointer-events:
-none`, about 140 particles. Each carries `edgeWeight = 1 − smoothstep(0.55, 0.85,
+none`, about 140 particles. Each carries `edgeWeight = smoothstep(0.55, 0.85,
 d)` where `d` is its normalised distance from the window centre. Particles inside
 the central 60 % have weight 0 and only drift. Edge particles feel the cursor
 through `F = edgeWeight × k / (r² + ε)`. The gradient is smooth, so no boundary

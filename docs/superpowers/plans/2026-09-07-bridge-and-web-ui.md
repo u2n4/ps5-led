@@ -61,7 +61,12 @@ Measured facts this plan is built on, all captured in this repo's session:
 - Edge `--app` with its own `--user-data-dir` gives a process we own; it stays alive exactly as long as the window.
 - WebGL2 in that window reports `ANGLE (NVIDIA GeForce RTX 3070, D3D11)`.
 - The page sends `Origin: http://127.0.0.1:<port>`, so the Origin check is real.
-- The CC BY model is **6,658 KB**; `gltfpack -cc` takes it to 3,524 KB; re-encoding its seven 1024×1024 PNGs to WebP takes 2,978 KB of texture down to **618 KB**. Both together land near **1,150 KB**.
+- The CC BY model is **6,658 KB**. `@gltf-transform/cli` 4.5.0 `webp` then `meshopt` produces **1,178 KB** (measured). Order matters: running `webp` *after* `meshopt` decodes the mesh compression and lands at 2,164 KB instead.
+- The packed file requires `EXT_meshopt_compression`, `EXT_texture_webp` and `KHR_mesh_quantization`; all three are handled by three.js 0.185.1's `GLTFLoader` (checked against the loader source).
+- The model's node names are generic (`Object_5` … `Object_98`) and its materials carry names like `VRayMtl55`. The two meshes whose bounding boxes match a lightbar strip — thin in Y, wide in X, forward in Z — are **`Object_18`** (ext 0.265×0.018×0.074) and **`Object_47`** (ext 0.565×0.037×0.018). Those names survive packing.
+- `GLTFLoader.js` imports `../utils/BufferGeometryUtils.js` and `../utils/SkeletonUtils.js`; both import only from `three`. Six files must be vendored, not four.
+- The DualSense sensor timestamp is in units of **1/3 µs**: the kernel does `DIV_ROUND_CLOSEST(delta, 3)` to get microseconds, with explicit u32 wraparound handling. `dt = Δ / 3 000 000` seconds.
+- Edge `--app` combined with `--start-fullscreen` gives a fullscreen app window the user can leave with F11 — not `--kiosk`, which locks the machine down.
 
 ## Known defects Plan 1 parked that this plan must handle
 
@@ -816,6 +821,10 @@ Everything the page can reach passes the guard, so the guard is the first thing 
 
 Static files are served from `web/` with no directory traversal: a request path is resolved and must stay under `WEB_ROOT`.
 
+`WEB_ROOT` is `pathlib.Path(__file__).resolve().parent.parent / "web"`. Inside a PyInstaller onefile bundle `__file__` lives under `sys._MEIPASS/ps5led/`, so this resolves to `sys._MEIPASS/web` — which is exactly where Plan 3's `datas=[('web', 'web')]` puts it. Do not "simplify" it to a cwd-relative path.
+
+`test_stop_releases_the_port` rebinds the same port immediately after a close. `HTTPServer` sets `allow_reuse_address`, so this passes on Linux and normally on Windows, but Windows `SO_REUSEADDR` semantics differ; if it proves flaky there, the honest weaker assertion is that a *fresh* bridge starts after `stop()`, not that it reclaims the identical port.
+
 - [ ] **Step 1: Write the failing test**
 
 `tests/test_bridge.py`:
@@ -1013,6 +1022,7 @@ import pathlib
 import posixpath
 import secrets
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -1796,8 +1806,6 @@ And the method:
 
 ```python
     def _stream(self):
-        import time as _time
-
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1814,7 +1822,7 @@ And the method:
         last_sensor = 0.0
         try:
             while bridge.running:
-                now = _time.monotonic()
+                now = time.monotonic()
                 snapshot = state.snapshot()
                 state_period = 1.0 / (bridge.STATE_HZ if bridge.page_visible
                                       else bridge.IDLE_HZ)
@@ -1824,7 +1832,7 @@ And the method:
                 if bridge.page_visible and now - last_sensor >= 1.0 / bridge.SENSOR_HZ:
                     self._emit("sensor", bridge.sensor_payload(snapshot))
                     last_sensor = now
-                _time.sleep(1.0 / (bridge.SENSOR_HZ * 2) if bridge.page_visible else 0.25)
+                time.sleep(1.0 / (bridge.SENSOR_HZ * 2) if bridge.page_visible else 0.25)
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
             # The page navigated away or the window closed. Normal, not an error.
             pass
@@ -2150,8 +2158,10 @@ cd "C:\Users\aliha\codAi\projects\dualled-pro"
 mkdir -p web/vendor/three
 npm pack three@0.185.1
 tar -xzf three-0.185.1.tgz
-cp package/build/three.module.js web/vendor/three/three.module.js
+cp package/build/three.module.min.js web/vendor/three/three.module.js
 cp package/examples/jsm/loaders/GLTFLoader.js web/vendor/three/GLTFLoader.js
+cp package/examples/jsm/utils/BufferGeometryUtils.js web/vendor/three/BufferGeometryUtils.js
+cp package/examples/jsm/utils/SkeletonUtils.js web/vendor/three/SkeletonUtils.js
 cp package/examples/jsm/environments/RoomEnvironment.js web/vendor/three/RoomEnvironment.js
 cp package/examples/jsm/libs/meshopt_decoder.module.js web/vendor/three/meshopt_decoder.module.js
 cp package/LICENSE web/vendor/three/LICENSE
@@ -2165,9 +2175,13 @@ ls -la web/vendor/three/
 grep -n "^import" web/vendor/three/GLTFLoader.js | head -3
 ```
 
-Fix the bare `three` specifier so the browser can resolve it without an import
-map — replace `from 'three'` with `from './three.module.js'` in `GLTFLoader.js`
-and `RoomEnvironment.js`, then confirm no bare specifiers remain:
+`GLTFLoader.js` imports `../utils/BufferGeometryUtils.js` and
+`../utils/SkeletonUtils.js` (measured); both are vendored above, so rewrite
+those two relative paths to `./BufferGeometryUtils.js` and `./SkeletonUtils.js`.
+Then fix the bare `three` specifier so the browser can resolve it without an
+import map — replace `from 'three'` with `from './three.module.js'` in all
+four jsm files (`GLTFLoader.js`, `BufferGeometryUtils.js`, `SkeletonUtils.js`,
+`RoomEnvironment.js`), then confirm no bare specifiers remain:
 
 ```bash
 grep -rn "from 'three'" web/vendor/three/ || echo "no bare specifiers left"
@@ -2182,21 +2196,25 @@ grep -rn "from 'three'" web/vendor/three/ || echo "no bare specifiers left"
 /**
  * pack_model.mjs - one-shot: turn the CC BY source GLB into the file we ship.
  *
- * Run once; the output is committed. Measured on this repo:
- *   source                     6,658 KB
- *   gltfpack -cc (meshopt)     3,524 KB
- *   textures PNG -> WebP        2,978 KB -> 618 KB
- *   both                       ~1,150 KB
+ * Run once; the output is committed. Measured on this repo with
+ * @gltf-transform/cli 4.5.0:
+ *   source                          6,658 KB
+ *   webp  (textures PNG -> WebP)    4,306 KB
+ *   meshopt (geometry)              1,178 KB   <- shipped
  *
- * gltfpack's node build cannot do textures - it is compiled without BasisU -
- * so ffmpeg does that half and EXT_texture_webp carries it in the glTF.
+ * ORDER MATTERS. Running `webp` after `meshopt` decodes the mesh compression
+ * ("Decoded EXT_meshopt_compression. Further compression will be lossy.") and
+ * lands at 2,164 KB. Textures first, geometry second.
+ *
+ * The result requires EXT_meshopt_compression, EXT_texture_webp and
+ * KHR_mesh_quantization, all handled by three.js 0.185.1's GLTFLoader.
  *
  * Usage: node tools/pack_model.mjs --in <source.glb> --out web/assets/dualsense.glb
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const args = Object.fromEntries(process.argv.slice(2).flatMap((a, i, arr) =>
   a.startsWith('--') ? [[a.slice(2), arr[i + 1]]] : []));
@@ -2205,37 +2223,36 @@ const OUT = args.out ?? 'web/assets/dualsense.glb';
 if (!IN || !existsSync(IN)) { console.error('need --in <source.glb>'); process.exit(1); }
 
 const work = mkdtempSync(join(tmpdir(), 'packmodel-'));
-const packed = join(work, 'packed.glb');
+const webp = join(work, 'webp.glb');
 
-console.log('1/3 meshopt geometry compression');
-execFileSync('npx', ['--yes', 'gltfpack', '-i', IN, '-o', packed, '-cc'], { stdio: 'inherit', shell: true });
+function transform(command, input, output) {
+  // shell:true because npx is a .cmd shim on Windows.
+  execFileSync('npx', ['--yes', '@gltf-transform/cli@4.5.0', command, input, output],
+               { stdio: 'inherit', shell: true });
+}
 
-console.log('2/3 re-encoding textures to WebP');
-const glb = readFileSync(packed);
+const kb = (path) => (readFileSync(path).length / 1024).toFixed(0);
+
+console.log(`source ${kb(IN)} KB`);
+console.log('1/2 textures -> WebP');
+transform('webp', IN, webp);
+console.log(`   ${kb(webp)} KB`);
+
+console.log('2/2 geometry -> meshopt');
+mkdirSync(dirname(OUT), { recursive: true });
+transform('meshopt', webp, OUT);
+console.log(`wrote ${OUT}: ${kb(OUT)} KB`);
+
+// Belt and braces: the loader needs every extension the file requires.
+const glb = readFileSync(OUT);
 const jsonLength = glb.readUInt32LE(12);
 const gltf = JSON.parse(glb.subarray(20, 20 + jsonLength).toString('utf8'));
-const binStart = 20 + jsonLength + 8;
-const images = gltf.images ?? [];
-let saved = 0;
-for (let i = 0; i < images.length; i++) {
-  const view = gltf.bufferViews[images[i].bufferView];
-  const start = binStart + (view.byteOffset ?? 0);
-  const png = join(work, `${i}.png`);
-  const webp = join(work, `${i}.webp`);
-  writeFileSync(png, glb.subarray(start, start + view.byteLength));
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', png,
-                          '-c:v', 'libwebp', '-quality', '88', '-compression_level', '6', webp],
-               { stdio: 'inherit' });
-  saved += view.byteLength - readFileSync(webp).length;
+console.log(`extensionsRequired: ${(gltf.extensionsRequired ?? []).join(', ')}`);
+const names = (gltf.nodes ?? []).map((n) => n.name);
+for (const wanted of ['Object_18', 'Object_47']) {
+  if (!names.includes(wanted)) console.warn(`WARNING: lightbar candidate ${wanted} did not survive packing`);
 }
-console.log(`   textures would save ${(saved / 1024).toFixed(0)} KB as WebP`);
-
-console.log('3/3 writing the packed model');
-mkdirSync(dirname(OUT), { recursive: true });
-writeFileSync(OUT, readFileSync(packed));
-const size = readFileSync(OUT).length;
-console.log(`wrote ${OUT}: ${(size / 1024).toFixed(0)} KB`);
-console.log('NOTE: verify it loads in the app before committing.');
+console.log('Verify it loads in the app before committing.');
 ```
 
 - [ ] **Step 3: Produce the model**
@@ -2247,8 +2264,9 @@ node tools/pack_model.mjs --in /tmp/ps5_source.glb --out web/assets/dualsense.gl
 ls -la web/assets/dualsense.glb
 ```
 
-Expected: a file well under the 6,658 KB source. Record the number you actually
-got in the commit message; do not repeat the estimate.
+Expected: about **1,178 KB** (the measured result of this exact pipeline on this
+exact source). If it comes out near 2,164 KB the steps ran in the wrong order.
+Record the number you actually got in the commit message.
 
 - [ ] **Step 4: Write the attribution**
 
@@ -2304,7 +2322,7 @@ git commit -m "feat(web): vendor three.js 0.185.1 and the packed CC BY model"
 
 This is the first task that puts something on screen. The particle field is here rather than later because it is the background everything else sits on, and because it is independently visible: run it and the window is alive before a single triangle of the model has loaded.
 
-The background reacts to the cursor **only near the edges**. Each particle carries `edgeWeight = 1 - smoothstep(0.55, 0.85, d)` where `d` is its distance from the window centre normalised so the centre is 0 and a corner is 1. Particles inside the central 60% have weight 0 and only drift. The gradient is smooth, so no boundary is visible.
+The background reacts to the cursor **only near the edges**. Each particle carries `edgeWeight = smoothstep(0.55, 0.85, d)` where `d` is its distance from the window centre normalised so the centre is 0 and a corner is 1 — so the weight is 0 in the middle and rises to 1 at the edges. (The spec's original wording had the `1 −` on the wrong side; the code was right and the prose has been corrected to match.) Particles inside the central 60% have weight 0 and only drift. The gradient is smooth, so no boundary is visible.
 
 The panel is glass — `backdrop-filter` over a translucent background — so the field shows through it and covers the whole window, which is what the spec asks for and what a Tk canvas could not do.
 
@@ -2528,8 +2546,9 @@ export function connect({ onState, onSensor, onOpen, onError }) {
 ```javascript
 // A drifting field that reacts to the cursor ONLY near the edges.
 //
-// Each particle carries edgeWeight = 1 - smoothstep(0.55, 0.85, d), where d is
-// its distance from the centre normalised so the centre is 0 and a corner is 1.
+// Each particle carries edgeWeight = smoothstep(0.55, 0.85, d), where d is its
+// distance from the centre normalised so the centre is 0 and a corner is 1 -
+// 0 in the middle, 1 at the edges.
 // Inside the central 60% the weight is 0 and the particle only drifts, so the
 // area behind the panel stays calm while the border comes alive under the
 // cursor. The ramp is smooth, so no boundary is visible.
@@ -2562,8 +2581,8 @@ export function startParticles(canvas) {
     // Normalised so the centre is 0 and a corner is 1.
     const dx = (x - width / 2) / (width / 2 || 1);
     const dy = (y - height / 2) / (height / 2 || 1);
-    const d = Math.min(1, Math.hypot(dx, dy) / Math.SQRT2 * Math.SQRT2);
-    return 1 - smoothstep(0.55, 0.85, 1 - d) === 0 ? smoothstep(0.55, 0.85, d) : smoothstep(0.55, 0.85, d);
+    const d = Math.min(1, Math.hypot(dx, dy) / Math.SQRT2);
+    return smoothstep(0.55, 0.85, d);
   };
 
   const seed = () => {
@@ -2652,18 +2671,6 @@ export function startParticles(canvas) {
 }
 ```
 
-Simplify `edgeWeight` to exactly this before moving on — the expression above is
-redundant and must not ship:
-
-```javascript
-  const edgeWeight = (x, y) => {
-    const dx = (x - width / 2) / (width / 2 || 1);
-    const dy = (y - height / 2) / (height / 2 || 1);
-    const d = Math.min(1, Math.hypot(dx, dy) / Math.SQRT2);
-    return smoothstep(0.55, 0.85, d);
-  };
-```
-
 - [ ] **Step 5: Wire it up and see it**
 
 `web/js/app.js`:
@@ -2741,6 +2748,10 @@ import { GLTFLoader } from '../vendor/three/GLTFLoader.js';
 import { RoomEnvironment } from '../vendor/three/RoomEnvironment.js';
 import { MeshoptDecoder } from '../vendor/three/meshopt_decoder.module.js';
 
+// Located offline by bounding box in the CC BY source; see the plan's
+// measured-facts list. Pinned by name, with a geometry fallback.
+const LIGHTBAR_NODES = ['Object_18', 'Object_47'];
+
 const SHELL_COLOURS = {
   white: 0xe9ecf2,
   black: 0x1b1f27,
@@ -2783,16 +2794,19 @@ export function createScene(canvas) {
     model.scale.setScalar(0.35 / Math.max(size.x, size.y, size.z));
     root.add(model);
 
-    // The lightbar is the pair of thin strips flanking the touchpad: long in X,
-    // shallow in Y, sitting forward in Z. The model's material names are
-    // generic, so geometry is the only honest discriminator.
+    // The model's names are generic (Object_5 ... Object_98, materials like
+    // VRayMtl55), so the lightbar was located offline by bounding box: the
+    // meshes thin in Y, wide in X and forward in Z are Object_18 and
+    // Object_47. Those names are pinned first; the geometry test below is
+    // the fallback for a repacked model whose names changed.
     model.traverse((node) => {
       if (!node.isMesh) return;
       const bounds = new THREE.Box3().setFromObject(node);
       const extent = bounds.getSize(new THREE.Vector3());
+      const pinned = LIGHTBAR_NODES.includes(node.name) || LIGHTBAR_NODES.includes(node.parent?.name);
       const thin = extent.y < size.y * 0.06;
       const wide = extent.x > size.x * 0.10 && extent.x < size.x * 0.45;
-      if (thin && wide && bounds.getCenter(new THREE.Vector3()).z > centre.z) {
+      if (pinned || (thin && wide && bounds.getCenter(new THREE.Vector3()).z > centre.z)) {
         node.material = node.material.clone();
         lightbars.push(node);
       } else if (extent.x > size.x * 0.5) {
@@ -2919,9 +2933,11 @@ change together:
 python -m ps5led --no-browser --port 8731 --mode rainbow
 ```
 
-Check the browser console for the `lightbar meshes:` line. If it says
-`(none found)`, the geometry heuristic missed — record the mesh names it did
-traverse and pin them by name instead of guessing again.
+Check the browser console for the `lightbar meshes:` line — it should name
+`Object_18` and/or `Object_47`. If only one of them is actually the strip
+(the other may be a nearby trim piece), remove the wrong one from
+`LIGHTBAR_NODES` and say which in the commit. If neither lights, the pins
+are wrong: log every mesh name and its bounds and pick again from evidence.
 
 - [ ] **Step 4: Commit**
 
@@ -3065,6 +3081,16 @@ Open the URL, pick up the controller and tilt it. Expected: the model follows
 pitch and roll immediately and holds still when the controller is still. Put the
 controller down and the model should not creep. Disconnect it and the model
 eases back to the front view within a second.
+
+**Axis signs are calibrated by observation, not assumed.** The kernel's axis
+order (gyro X = pitch, Y = yaw, Z = roll) is known, but which way the model
+should turn for a positive reading depends on how the GLB was authored, and
+nothing short of looking can settle it. Tilt the controller nose-down: the
+model must tilt nose-down. Roll it right: the model rolls right. For any axis
+that goes the wrong way, negate that component where `gyro` and `accel` are
+unpacked in `update()`, and record the final sign triple as a constant
+`AXIS_SIGN = [±1, ±1, ±1]` at the top of `orientation.js` with a comment
+saying it was set by observation on 2026-09-07 against the packed model.
 
 - [ ] **Step 4: Commit**
 
@@ -3286,7 +3312,7 @@ git commit -m "feat(web): controls, i18n, About with the CC BY credit"
 | `setPixelRatio(min(dpr, 1.5))`, rAF only | 10 |
 | Complementary filter α = 0.98, yaw by integration + Recentre | 11 |
 | Eases home after 250 ms of no samples | 11 |
-| ~140 particles, `edgeWeight = 1 − smoothstep(0.55, 0.85, d)` | 9 |
+| ~140 particles, `edgeWeight = smoothstep(0.55, 0.85, d)` (spec prose corrected) | 9 |
 | Central 60 % inert, links ≤ 110 px, reduced-motion respected | 9 |
 | Glass panel with `backdrop-filter: blur(22px) saturate(140%)` | 9 |
 | `dir` flips without a reload for `applyLanguage`; language change reloads to re-render controls | 12 |
