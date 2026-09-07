@@ -1,7 +1,9 @@
-import { boot, connect } from './bridge.js';
+import { boot, connect, send } from './bridge.js';
 import { startParticles } from './particles.js';
 import { createScene } from './scene.js';
 import { createOrientation } from './orientation.js';
+import { mountControls } from './ui.js';
+import { applyLanguage } from './i18n.js';
 
 startParticles(document.getElementById('particles'));
 
@@ -18,22 +20,32 @@ try {
   fallback.textContent = `3D view unavailable: ${error.message}`;
 }
 
+const orientation = createOrientation();
+let lastTimestamp = null;
+// Set once boot() resolves; onState below falls back to English until then,
+// which only matters for the handful of frames before the first boot reply.
+let strings = null;
+
 boot().then((payload) => {
-  document.title = payload.i18n.en.app_title;
+  strings = applyLanguage(payload.i18n, payload.direction, payload.config.language);
+  document.title = strings.app_title;
   scene?.setShell(payload.config.shell);
+  mountControls(document.getElementById('controls'), {
+    boot: payload,
+    send,
+    onShell: (shell) => scene?.setShell(shell),
+    onRecentre: () => orientation.recentre(),
+  });
 }).catch((error) => {
   conn.textContent = String(error);
   conn.className = 'pill bad';
 });
 
-const orientation = createOrientation();
-let lastTimestamp = null;
-
 connect({
   onState(state) {
     conn.textContent = state.connected
-      ? (state.transport === 'bt' ? 'Bluetooth' : 'USB')
-      : 'Disconnected';
+      ? (state.transport === 'bt' ? (strings?.transport_bt ?? 'Bluetooth') : (strings?.transport_usb ?? 'USB'))
+      : (strings?.disconnected ?? 'Disconnected');
     conn.className = `pill ${state.connected ? 'ok' : 'bad'}`;
     batt.textContent = state.battery == null ? '—' : `${state.battery}%`;
     if (state.rgb) scene?.setColour(state.rgb);
