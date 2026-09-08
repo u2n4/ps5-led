@@ -1,0 +1,23 @@
+<Configuration>
+  <!--
+    Test the portable build on a Windows that has never had anything installed.
+
+    The staging folder is mapped READ-WRITE on purpose: the sandbox is thrown
+    away when it closes, so the run has to write its report and screenshot back
+    to the host or the evidence dies with it.
+
+    Networking is off. The EXE must work with nothing to download.
+  -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\Users\aliha\codAi\projects\dualled-pro\tools\sandbox\stage</HostFolder>
+      <SandboxFolder>C:\host</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <Networking>Default</Networking>
+  <vGPU>Enable</vGPU>
+  <LogonCommand>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\host\hid-probe.ps1</Command>
+  </LogonCommand>
+</Configuration>

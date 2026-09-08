@@ -82,7 +82,13 @@ def main():
             hits = list(appdata.rglob("app.log"))
             if hits and hits[0].stat().st_size:
                 log_path = hits[0]
-                if "preview:" in log_path.read_text(encoding="utf-8", errors="replace"):
+                text = log_path.read_text(encoding="utf-8", errors="replace")
+                # Wait for the CONTROLLER line, not just the preview one. The
+                # first version stopped at "preview:" and terminated the app a
+                # second before it logged "controller connected", so a working
+                # run read as a controller that was never found.
+                if "controller connected" in text or "controller disconnected" in text and (
+                        time.time() > deadline - RUN_SECONDS + 12):
                     break
             if proc.poll() is not None:
                 break
@@ -102,6 +108,9 @@ def main():
         m = re.search(r"preview: (OpenGL|built-in drawing)", text)
         if m:
             backend = "gl" if m.group(1) == "OpenGL" else "canvas"
+        pad = re.search(r"controller connected: (.+)", text)
+        print("controller       :", pad.group(1).strip() if pad
+              else "not detected during this run")
 
         try:
             proc.terminate()

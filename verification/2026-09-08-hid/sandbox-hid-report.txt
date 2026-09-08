@@ -1,0 +1,10 @@
+﻿
+[15:10:06] machine : CA82A215-5AF7-4
+[15:10:07] OS      : Microsoft Windows 11 Enterprise
+[15:10:07] context : inside Windows Sandbox
+[15:10:08] HID devices visible : 0
+[15:10:08] Sony (VID 054C) devices : 0
+[15:10:08] USB controller bindings : 0
+[15:10:08] Bluetooth devices : 0
+[15:10:08] 
+[15:10:08] VERDICT: no HID devices at all - nothing is passed through
