@@ -1,0 +1,55 @@
+Does this need anything a fresh Windows does not already have?
+
+The question behind it: on a PC with nothing installed, will the lightbar work?
+The literal combination -- a clean OS with a controller attached -- cannot be
+tested here, because Windows Sandbox passes through no USB or HID at all
+(measured: 0 HID devices, 0 Sony devices, 0 USB bindings, 0 Bluetooth, against
+the host's 4 Sony devices and 72 USB bindings). So the two things that
+combination depends on were measured separately instead.
+
+1. THE CONTROLLER'S DRIVERS ARE ALL MICROSOFT INBOX
+
+   Every driver backing the DualSense on this machine, over both transports:
+
+     Bluetooth HID Device            inf=hidbth.inf   provider=Microsoft  service=HidBth
+     Device Identification Service   inf=bth.inf      provider=Microsoft
+     USB Composite Device            inf=usb.inf      provider=Microsoft  service=usbccgp
+     HID-compliant game controller   inf=input.inf    provider=Microsoft
+     USB Input Device                inf=input.inf    provider=Microsoft  service=HidUsb
+     DualSense Wireless Controller   inf=wdma_usb.inf provider=Microsoft  service=usbaudio
+
+   Not one third-party driver. These INFs ship in every Windows install, so
+   plugging a DualSense into a fresh machine binds exactly these with nothing
+   to download. This is also why removing pydualsense and hidapi mattered:
+   the app now talks to the same inbox stack through ctypes.
+
+2. THE EXE LOADS NOTHING FROM OUTSIDE ITSELF
+
+   Every DLL in the running process:
+
+     total DLLs loaded   90
+     from Windows itself 75
+     from its own bundle 13
+     from anywhere else   2
+
+   The two "elsewhere" entries are the EXE's own image and
+   MpOav.dll, which Windows Defender injects into every process on the system.
+   Neither is a dependency of this app.
+
+3. WHAT WAS TESTED DIRECTLY
+
+   Clean Windows 11, no Python present, networking off (Windows Sandbox):
+       preview backend : OpenGL          -- app runs, 3D renders
+   Real controller, Python/conda/WindowsApps stripped from PATH, fresh AppData:
+       controller connected: DualSense Wireless Controller over usb
+   The one-liner install on a clean Windows:
+       file count : 1     total size : 10.56 MB
+       python after : still not installed
+
+WHAT REMAINS UNPROVEN
+
+   A clean OS with a controller physically attached, in one run. Blocked by
+   Sandbox having no USB stack. Closing it needs a second machine or a fresh
+   Windows user account. The evidence above says the risk is small -- there is
+   no component involved that a fresh Windows lacks -- but it is an inference
+   from two measurements, not a third measurement.
