@@ -1186,6 +1186,7 @@ class ControllerView(ttk.Frame):
         self.gl.bind("<ButtonPress-1>", self._gl_press, add="+")
         self.gl.bind("<ButtonRelease-1>", self._gl_release, add="+")
         self.backend = "gl"
+        log("preview: OpenGL")
         return True
 
     def _start_canvas(self):
@@ -1197,6 +1198,10 @@ class ControllerView(ttk.Frame):
             self.canvas.set_shell(self._shell)
         self.canvas.set_mode(self._mode)
         self.backend = "canvas"
+        # Say WHY on the way down. A preview that quietly drops to the flat
+        # drawing on someone else's machine is a bug report nobody can file.
+        log("preview: built-in drawing (OpenGL unavailable:",
+            repr(getattr(self, "_gl_error", None)) + ")")
 
     def _on_gl_failure(self, exc):
         """The GL context died after starting. Swap in the Canvas, keep running."""
