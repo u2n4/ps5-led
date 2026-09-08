@@ -1,0 +1,20 @@
+﻿
+[14:17:25] Real installer run, clean Windows
+[14:17:26] OS: Microsoft Windows 11 Enterprise
+[14:17:28] python before : not installed
+[14:17:34] network ready : True
+[14:17:34] running: irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
+[14:17:47] install dir : C:\Users\WDAGUtilityAccount\AppData\Local\DualLED-Pro
+[14:17:47] --- files it downloaded ---
+[14:17:48]    11,068,494  \PS5-LED.exe
+[14:17:48] file count : 1
+[14:17:48] total size : 10.56 MB
+[14:17:48] python after  : still not installed
+[14:17:48] python folders created : none
+[14:17:48] app running : True
+[14:17:48] preview backend : OpenGL
+[14:17:48] desktop shortcut : True
+[14:17:50] screenshot saved
+[14:17:50] 
+[14:17:50] VERDICT: one EXE, no Python, no pip - and the 3D preview came up
+[14:17:50] done - results are in the mapped folder

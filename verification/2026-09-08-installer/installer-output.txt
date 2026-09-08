@@ -1,0 +1,38 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260908141734
+Username: CA82A215-5AF7-4\WDAGUtilityAccount
+RunAs User: CA82A215-5AF7-4\WDAGUtilityAccount
+Configuration Name: 
+Machine: CA82A215-5AF7-4 (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\host\run-installer-in-sandbox.ps1
+Process ID: 7140
+PSVersion: 5.1.26100.9278
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9278
+BuildVersion: 10.0.26100.9278
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+============================================
+   PS5 LED - automatic installer
+   PS5 DualSense / PS4 DualShock 4 RGB
+============================================
+
+==> Downloading PS5 LED portable (no Python needed) ...
+PS>TerminatingError(Invoke-WebRequest): "The response content cannot be parsed because the Internet Explorer engine is not available, or Internet Explorer's first-launch configuration is not complete. Specify the UseBasicParsing parameter and try again. "
+    [OK] Portable app downloaded (10.6 MB)
+
+==> Creating Desktop shortcut ...
+    [OK] Shortcut created on your Desktop: 'PS5 LED'
+
+==> Launching PS5 LED ...
+    [OK] Done! The app window should open now.
+
+    Next time, just double-click 'PS5 LED' on your Desktop.
+**********************
+Windows PowerShell transcript end
+End time: 20260908141739
+**********************
