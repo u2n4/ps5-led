@@ -11,7 +11,7 @@ PS5 LED — v2 (DualSense SVG Edition)
     python "V9 - Copy.py"
 """
 
-import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, hashlib, queue
+import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, zlib, queue
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -216,7 +216,10 @@ def _instance_already_running() -> bool:
     import ctypes
     from ctypes import wintypes
     exe_path = os.path.abspath(sys.argv[0]).lower()
-    key = hashlib.sha1(exe_path.encode("utf-8")).hexdigest()[:8]
+    # crc32, not sha1: this only has to be short and stable for a mutex
+    # name. hashlib pulls in OpenSSL, which is 5.0 MB of the packaged EXE
+    # for one hash of a file path.
+    key = format(zlib.crc32(exe_path.encode("utf-8")) & 0xFFFFFFFF, "08x")
     name = f"Global\\{APP_NAME}_SingleInstance_{key}"
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     CreateMutexW = kernel32.CreateMutexW
@@ -225,47 +228,6 @@ def _instance_already_running() -> bool:
     handle = CreateMutexW(None, False, name)
     # ERROR_ALREADY_EXISTS = 183
     return ctypes.get_last_error() == 183
-    exe_path = os.path.abspath(sys.argv[0]).lower()
-    key = hashlib.sha1(exe_path.encode("utf-8")).hexdigest()[:8]
-    name = f"Global\\{APP_NAME}_SingleInstance_{key}"
-    # Try with pywin32 if available
-    try:
-        import win32event, win32api, winerror
-        h = win32event.CreateMutex(None, False, name)
-        return win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS
-    except Exception:
-        pass
-    # Fallback to ctypes
-    try:
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        CreateMutexW = kernel32.CreateMutexW
-        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-        CreateMutexW.restype  = wintypes.HANDLE
-        handle = CreateMutexW(None, False, name)
-        # ERROR_ALREADY_EXISTS = 183
-        return ctypes.get_last_error() == 183
-    except Exception:
-        return False
-
-# -- Strong Windows single-instance guard (works even after packaging to EXE)
-def _win_mutex_already_running() -> bool:
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        CreateMutexW = kernel32.CreateMutexW
-        GetLastError = kernel32.GetLastError
-        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-        CreateMutexW.restype  = wintypes.HANDLE
-        handle = CreateMutexW(None, False, f"Global\\{APP_NAME}_SingleInstance")
-        # ERROR_ALREADY_EXISTS = 183
-        return ctypes.get_last_error() == 183
-    except Exception:
-        return False
 
 _lock_fp = None; _lock_path = None
 def acquire_slot_lock(max_instances:int) -> bool:

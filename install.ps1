@@ -93,8 +93,11 @@ try {
 
 if ($exeOk) {
     Write-Ok "Portable app downloaded ($([math]::Round((Get-Item $ExeFile).Length / 1MB, 1)) MB)"
-    try { Invoke-WebRequest -Uri "$RawBase/assets/app.ico" -OutFile $IcoFile } catch { }
-    $iconArg = if (Test-Path $IcoFile) { $IcoFile } else { "$ExeFile,0" }
+    # The EXE carries its own icon, so the shortcut points at it. Downloading a
+    # separate .ico fetched a second file to get a picture the first one
+    # already had -- and on this path the whole point is that nothing else
+    # comes down.
+    $iconArg = "$ExeFile,0"
 
     Write-Step "Creating Desktop shortcut ..."
     try {
