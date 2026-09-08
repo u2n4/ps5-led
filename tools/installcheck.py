@@ -1,14 +1,13 @@
-"""Does a fresh quick-install actually run?
+"""Check the source app's minimum runtime payload in an isolated directory.
 
-The installer does not copy the repository. It downloads a specific list of
-files, and a list is easy to get wrong -- one missing module and the app dies
-on a machine nobody tested. So this builds a directory holding EXACTLY what
-install.ps1 fetches, nothing else, and starts the app there.
+This is a source dependency smoke test, not an EXE installer test.
+install.ps1 downloads only the executable; install-source.ps1 downloads the
+entire tracked project. This smaller payload verifies that source execution
+does not accidentally depend on other files in the developer checkout.
 
-It runs the check twice: once as a machine that got the optional viewer
-packages, and once as a machine that did not. The second is the one that
-matters, because a pip failure after a PowerShell install is the original bug
-this whole project exists to fix.
+Run with and without the optional OpenGL packages to verify both viewers.
+Use tests/test_installers.py for installer behavior and tools/execheck.py
+plus Windows Sandbox for the actual executable.
 """
 import os
 import pathlib
@@ -19,8 +18,7 @@ import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
-# Mirrors install.ps1 exactly. Keep the two in step: a file added to the app
-# and forgotten here is invisible until someone installs from scratch.
+# Minimum source runtime files, deliberately excluding development tooling.
 ROOT_FILES = ["dualled_pro.py", "requirements.txt", "controller_gl.py",
               "ATTRIBUTION.md"]
 PS5LED_MODULES = ["__init__", "hid_win", "dualsense", "dualshock4", "crc", "device"]

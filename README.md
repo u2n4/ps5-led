@@ -4,8 +4,8 @@
 
 ### Real-time RGB lightbar control for PS5 DualSense & PS4 DualShock 4 — with a live 3D controller view
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-555?logo=windows&logoColor=white)](#-installation)
+[![Portable](https://img.shields.io/badge/Portable-EXE%20%E2%80%94%20no%20Python-3776AB)](#-easy-install--windows-exe-only)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2064--bit-555?logo=windows&logoColor=white)](#-installation)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](CONTRIBUTING.md)
 [![Made with Tkinter](https://img.shields.io/badge/UI-Tkinter-FFD43B?logo=python&logoColor=333)](https://docs.python.org/3/library/tkinter.html)
@@ -22,29 +22,21 @@
 
 ---
 
-## ⚡ Easy install (no Python needed)
+## ⚡ Easy install — Windows EXE only
 
-**Don't have Python? No problem.** Open **PowerShell** and paste this **one line** — it installs Python (if you don't have it), downloads the app, installs everything, and opens it automatically:
+Open **PowerShell** and paste:
 
 ```powershell
 irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 ```
 
-<details>
-<summary>👉 How do I open PowerShell?</summary>
+This downloads the latest published **PS5-LED.exe**, checks its mandatory SHA256 manifest, creates a **PS5 LED** desktop shortcut and opens the app. Python, pip, .NET and separate viewer packages are **not required**: the executable bundles its runtime, native HID code, 3D viewer and assets. Windows supplies the HID and graphics drivers.
 
-1. Press the **Windows key**.
-2. Type **`powershell`**.
-3. Click **Windows PowerShell**, paste the line above, press **Enter**.
-4. Wait. The app opens by itself when it's done. ✅
+If the release or checksum cannot be downloaded or verified, installation stops with an error. There is no source or Python fallback, including through the former `PS5LED_ALLOW_PYTHON_INSTALL` variable. Updates preserve your settings and replace only the executable after verification; repeated installs do not accumulate backup files.
 
-> If you see a message asking you to open a **new** PowerShell window, just close it, open PowerShell again, and paste the same line once more.
+The default installation folder is `%LOCALAPPDATA%\DualLED-Pro`. Advanced script parameters: `-InstallDir`, `-Version <release-tag>`, `-NoLaunch`, `-NoShortcut`. You can also download the executable and its checksum from [Releases](https://github.com/u2n4/ps5-led/releases).
 
-</details>
-
-To run it again later, just paste the same line — or use the shortcut printed at the end of the install.
-
-> 🛠 Manual install (for developers) is in [Installation](#-installation) below.
+**For the complete source/project instead, use the separate [developer download](#-installation) below.**
 
 ---
 
@@ -77,37 +69,46 @@ To run it again later, just paste the same line — or use the shortcut printed 
 
 ## 🚀 Installation
 
-> **Requires Windows and Python 3.8+** with Tkinter, plus a controller connected over **USB or Bluetooth**. The OpenGL viewer requires a working graphics driver.
+### Download the full source/project — developers only
 
-```bash
-# 1. Clone
-git clone https://github.com/u2n4/ps5-led.git
-cd dualled-pro
+This **different PowerShell command** downloads all tracked project files, assets, tests, tools, documentation and dotfiles to a new folder under Downloads:
 
-# 2. (recommended) virtual env
+```powershell
+irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install-source.ps1 | iex
+```
+
+It downloads the complete `main` tree at one resolved commit. It does not install dependencies, launch the program or overwrite existing folders. The archive includes the full project; Git history, generated releases and local/untracked files are not part of a source archive. For Git history, use `git clone https://github.com/u2n4/ps5-led.git` and then `cd ps5-led`.
+
+To choose a branch, tag or commit and output directory:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install-source.ps1))) -Ref main -Destination "$HOME\Downloads\ps5-led-dev"
+```
+
+### Run or build the downloaded source
+
+Only source development needs **Windows, Python 3.8+ and Tkinter**. From the downloaded project directory:
+
+```powershell
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS / Linux:
-source .venv/bin/activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Run
-python dualled_pro.py
+.\.venv\Scripts\python.exe -m pip install PyOpenGL==3.1.10 pyopengltk==0.0.4
+.\.venv\Scripts\python.exe dualled_pro.py
 ```
 
-**Minimal install** (just enough to run):
+The two packages enable the full embedded 3D viewer. Without them the source app uses its Canvas fallback; native controller access still needs no third-party HID package. `requirements.txt` intentionally contains no mandatory packages.
 
-```bash
-pip install -r requirements.txt
-python dualled_pro.py
+Building a standalone EXE is a separate developer step, using Python 3.13 for the currently verified build:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install PyInstaller==6.21.0
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm PS5-LED.spec
 ```
 
-### Windows driver note (PS5 DualSense)
+The result is `dist\PS5-LED.exe`. End users run that file without installing the development tools above.
 
-Keep the controller on the standard Windows HID driver. USB and Bluetooth access use the bundled pure-ctypes HID stack; no third-party HID package or driver replacement is required.
+### Windows driver note
+
+Keep the controller on the standard Windows HID driver for USB or Bluetooth. No driver replacement is required.
 
 ---
 
@@ -192,7 +193,7 @@ The embedded viewer uses PyOpenGL and pyopengltk; device access uses Windows HID
 - 🪟 **ملء الشاشة + تصغير للشريط** بدلاً من الإغلاق.
 - 🌌 **خلفية نجوم متحركة** (قابلة للإيقاف).
 - 🎛️ **وضع خلفي بدون واجهة** عبر سطر الأوامر.
-- 🧩 **ملف واحد، بدون أي بناء** — `dualled_pro.py` فقط، بايثون + Tkinter.
+- 🧩 **برنامج Tkinter الأصلي** — ملف EXE مستقل للمستخدم، ومصدر المشروع كامل للمطور.
 
 > **بصراحة، نطاق البرنامج:** PS5 LED مركّز على **الإضاءة، البطارية، والإعدادات المحفوظة**. مو برنامج تفاعل مع الموسيقى ولا ماكروهات ولا جدولة — يسوّي شي واحد ويسوّيه نظيف.
 
@@ -208,52 +209,58 @@ The embedded viewer uses PyOpenGL and pyopengltk; device access uses Windows HID
 
 ---
 
-### ⚡ التثبيت السهل (بدون بايثون ولا أي شي)
+### ⚡ التثبيت السهل — ملف EXE فقط
 
-**ما عندك بايثون؟ عادي.** افتح **PowerShell** والصق هذا **السطر الواحد** — يثبّت بايثون لو ما هو موجود، يحمّل البرنامج، يركّب كل شي، ويفتح البرنامج تلقائياً:
+افتح **PowerShell** والصق:
 
 ```powershell
 irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex
 ```
 
-**كيف تفتح PowerShell؟**
-1. اضغط زر **Windows**.
-2. اكتب **`powershell`**.
-3. افتح **Windows PowerShell**، الصق السطر فوق، اضغط **Enter**.
-4. استنى. البرنامج يفتح بنفسه لما يخلّص. ✅
+يحمّل آخر إصدار منشور من **PS5-LED.exe**، ويتحقق من ملف SHA256 الإلزامي، ويسوي اختصار **PS5 LED** على سطح المكتب ويفتح البرنامج. **ما يحتاج تثبيت Python أو pip أو .NET أو مكتبات عرض منفصلة**؛ ملف EXE يضم بيئة التشغيل وكود اليد والعارض ثلاثي الأبعاد وملفاته. تعريفات HID والرسوم يوفرها Windows.
 
-> لو طلعت لك رسالة تقول افتح نافذة PowerShell **جديدة** — سكّر النافذة، افتح PowerShell مرة ثانية، والصق نفس السطر.
+إذا تعذر تنزيل الإصدار أو التحقق من بصمته، يتوقف برسالة واضحة. ما فيه تحويل تلقائي إلى Python أو المصدر، حتى لو كان المتغير القديم `PS5LED_ALLOW_PYTHON_INSTALL` مضبوطًا. التحديث يحافظ على إعداداتك ويستبدل ملف EXE فقط بعد التحقق؛ تكرار التثبيت ما يراكم ملفات نسخ احتياطية.
 
-لتشغيله مرة ثانية بعدين: الصق نفس السطر، أو استخدم الاختصار اللي يطلع لك بنهاية التثبيت.
+مكان التثبيت الافتراضي `%LOCALAPPDATA%\DualLED-Pro`. خيارات السكربت: `-InstallDir` و`-Version <release-tag>` و`-NoLaunch` و`-NoShortcut`. والتنزيل اليدوي متاح من [صفحة الإصدارات](https://github.com/u2n4/ps5-led/releases).
 
-### 🚀 التثبيت اليدوي (للمطورين)
+### 🚀 تحميل المصدر والمشروع كامل — للمطورين
 
-> يحتاج **بايثون 3.8+** ويد موصولة عبر **USB** (البلوتوث يشتغل بعد على أغلب الأجهزة).
+هذا **أمر PowerShell مختلف** يحمّل كل ملفات المشروع المتتبعة، بما فيها الأصول والاختبارات والأدوات والتوثيق والملفات المخفية، داخل مجلد جديد في Downloads:
 
-```bash
-# 1. انسخ المستودع
-git clone https://github.com/u2n4/ps5-led.git
-cd dualled-pro
+```powershell
+irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install-source.ps1 | iex
+```
 
-# 2. (يُفضّل) بيئة افتراضية
+يحمّل شجرة `main` كاملة عند commit محدد. ما يثبت مكتبات ولا يشغّل البرنامج ولا يستبدل مجلدًا موجودًا. أرشيف المصدر ما يشمل تاريخ Git أو الإصدارات المبنية أو الملفات المحلية غير المتتبعة. إذا تبي تاريخ Git، استخدم `git clone https://github.com/u2n4/ps5-led.git` وبعده `cd ps5-led`.
+
+لاختيار فرع أو tag أو commit ومجلد التنزيل:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install-source.ps1))) -Ref main -Destination "$HOME\Downloads\ps5-led-dev"
+```
+
+### تشغيل المصدر أو بناء EXE
+
+تطوير المصدر يحتاج **Windows وPython 3.8+ وTkinter**. من مجلد المشروع الذي نزلته:
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-
-# 3. ركّب المتطلبات
-pip install -r requirements.txt
-
-# 4. شغّل
-python dualled_pro.py
+.\.venv\Scripts\python.exe -m pip install PyOpenGL==3.1.10 pyopengltk==0.0.4
+.\.venv\Scripts\python.exe dualled_pro.py
 ```
 
-**تثبيت سريع** (أقل شي يكفي للتشغيل):
+المكتبتان تشغّلان العرض ثلاثي الأبعاد الكامل. بدونهما تستخدم نسخة المصدر الرسم البديل Canvas، والاتصال باليد يظل بدون مكتبة HID إضافية. ملف `requirements.txt` متعمد ما فيه مكتبات إلزامية.
 
-```bash
-pip install -r requirements.txt
-python dualled_pro.py
+لبناء EXE مستقل، استخدم Python 3.13 المطابق للبناء المتحقق منه:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install PyInstaller==6.21.0
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm PS5-LED.spec
 ```
 
-> **درايفر ويندوز:** خلّ اليد على تعريف Windows HID الأصلي. الاتصال عبر USB وBluetooth يستخدم كود ctypes المرفق؛ ما يحتاج مكتبة HID إضافية أو تبديل التعريف.
+الناتج `dist\PS5-LED.exe`؛ مستخدم البرنامج ما يحتاج أدوات التطوير هذه.
+
+> **تعريف اليد:** خلّ اليد على Windows HID الأصلي. USB وBluetooth ما يحتاجان تبديل التعريف.
 
 ---
 
@@ -322,7 +329,7 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 
 This branch extends the original Tkinter window. Drag the model with the mouse or use the right analog stick to orbit it. Gyro mirroring is optional and starts off. The existing five shell palettes and lighting modes remain in the settings panel.
 
-The installer deliberately continues to download from `main` and the latest published release. Running it from this feature branch therefore does **not** install this branch. Test this checkout with `python dualled_pro.py`; publish the changed files and a rebuilt release before expecting the public installer to deliver this version.
+The quick installer installs a published release EXE only. The separate source downloader accepts `-Ref` for the branch, tag or commit you want to inspect. Publishing source changes does not replace release binaries: rebuild, verify and publish `PS5-LED.exe` with `PS5-LED.exe.sha256` together before expecting the quick installer to deliver a new build.
 
 `PS5-LED.spec` packages the Tk app, native HID modules, embedded viewer, preprocessed mesh, SVG fallback, icon and attribution into one Windows executable. PyInstaller is a **build-only** dependency; it is not required to run the Python app. A successful build alone does not verify rendering or controller operation: launch the built executable and check both before publishing it.
 
@@ -330,6 +337,6 @@ The installer deliberately continues to download from `main` and the latest publ
 
 هذا الفرع يطوّر نافذة Tkinter الأصلية. اسحب المجسم بالماوس أو استخدم العصا اليمنى لتدويره. تتبّع الجايرو اختياري ومطفأ عند البداية. ألوان الهيكل الخمسة وأوضاع الإضاءة تبقى ضمن الإعدادات الحالية.
 
-المثبّت ما زال يحمّل من `main` وآخر إصدار منشور؛ تشغيله من هذا الفرع **ما يثبّت نسخة الفرع**. جرّب النسخة المحلية عبر `python dualled_pro.py`. وصول التحديث للمثبّت العام يتطلب نشر الملفات وبناء إصدار جديد.
+المثبّت السريع يحمّل EXE من إصدار منشور فقط. أمر المصدر المنفصل يقبل `-Ref` لاختيار الفرع أو tag أو commit. نشر المصدر ما يحدّث ملفات الإصدار تلقائيًا؛ لازم بناء وفحص ونشر `PS5-LED.exe` مع `PS5-LED.exe.sha256` سويًا.
 
 ملف `PS5-LED.spec` يضم التطبيق والعارض والملفات المساعدة والمجسم البديل ونَسب النموذج في ملف Windows تنفيذي. PyInstaller مطلوب للبناء فقط. نجاح البناء لا يثبت عمل الرسم أو اليد؛ يلزم تشغيل الملف التنفيذي وفحصهما قبل النشر.

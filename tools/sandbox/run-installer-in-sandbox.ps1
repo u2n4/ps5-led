@@ -9,6 +9,7 @@
 # reach GitHub. Everything it fetches is therefore visible in what it leaves
 # behind.
 
+param([string]$InstallerUrl = 'https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1')
 $ErrorActionPreference = 'Continue'
 $share  = 'C:\host'
 $out    = Join-Path $share 'installer-result'
@@ -46,11 +47,11 @@ if (-not $online) {
 }
 
 # The exact command a person is told to paste.
-Say "running: irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | iex"
+Say "running: irm $InstallerUrl | iex"
 $transcript = Join-Path $out 'installer-output.txt'
 try {
     Start-Transcript -Path $transcript -Force | Out-Null
-    Invoke-RestMethod https://raw.githubusercontent.com/u2n4/ps5-led/main/install.ps1 | Invoke-Expression
+    Invoke-RestMethod $InstallerUrl | Invoke-Expression
 } catch {
     Say ("installer threw: " + $_.Exception.Message)
 } finally {
@@ -67,12 +68,15 @@ $installDir = Join-Path $env:LOCALAPPDATA 'DualLED-Pro'
 Say ("install dir : " + $installDir)
 if (Test-Path $installDir) {
     Say "--- files it downloaded ---"
-    $files = Get-ChildItem $installDir -Recurse -File | Sort-Object FullName
+    $files = @(Get-ChildItem $installDir -Recurse -File | Sort-Object FullName)
     foreach ($f in $files) {
         Say ("   {0,10:N0}  {1}" -f $f.Length, $f.FullName.Replace($installDir, ''))
     }
     Say ("file count : " + $files.Count)
     Say ("total size : {0:N2} MB" -f (($files | Measure-Object Length -Sum).Sum / 1MB))
+    if (Test-Path (Join-Path $installDir 'PS5-LED.exe')) {
+        Say ("EXE SHA256 : " + (Get-FileHash (Join-Path $installDir 'PS5-LED.exe') -Algorithm SHA256).Hash)
+    }
 } else {
     Say "install directory was never created"
 }
@@ -118,7 +122,9 @@ try {
 } catch { Say ("screenshot failed: " + $_.Exception.Message) }
 
 Say ""
-if ($backend -eq 'OpenGL' -and -not $pyAfter -and -not $sitePkgs) {
+if ($backend -eq 'OpenGL' -and $proc -and $files.Count -eq 1 -and
+    $files[0].Name -eq 'PS5-LED.exe' -and (Test-Path $lnk) -and
+    -not $pyAfter -and -not $sitePkgs) {
     Say "VERDICT: one EXE, no Python, no pip - and the 3D preview came up"
 } elseif ($pyAfter -or $sitePkgs) {
     Say "VERDICT: it installed Python or pip packages - the portable path did NOT hold"
