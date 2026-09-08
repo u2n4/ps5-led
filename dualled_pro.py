@@ -1858,6 +1858,21 @@ class App(tk.Tk):
                 pass
             flush_cfg()   # يلتقط آخر قيمة من الحفظ المخنوق
             hidden = self._ui_idle()
+            # Hardware state is logged whether or not anyone is looking at the
+            # window. This used to sit inside the `not hidden` branch, so an app
+            # running behind a game -- or just unfocused -- never recorded that
+            # it had found a controller, which is the one line someone needs
+            # when reporting that it did not.
+            if self.engine:
+                conn = bool(self.engine.b.snapshot().get("connected"))
+                if conn != getattr(self, "_last_conn", None):
+                    self._last_conn = conn
+                    snap = self.engine.b.snapshot()
+                    if conn:
+                        log("controller connected: %s over %s"
+                            % (snap.get("product"), snap.get("transport")))
+                    else:
+                        log("controller disconnected")
             if self.engine and not hidden:
                 sample = self.engine.b.snapshot()
                 out = sample.get("applied_rgb") or (0,0,0)
