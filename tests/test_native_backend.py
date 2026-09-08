@@ -117,6 +117,29 @@ class NativeBackendTests(unittest.TestCase):
         self.assertEqual(engine._last_apply, previous_time)
         self.assertIsNone(backend.snapshot()["applied_rgb"])
 
+    def test_manual_compares_wire_rgb_and_keeps_two_second_heartbeat(self):
+        for swapped in (False, True):
+            app = app_classes(); app["CFG"]["bgr_swap"] = swapped
+            backend = app["Backend"](); device = FakeDevice()
+            connect(backend._manager, device)
+            engine = app["Engine"](backend)
+            now = [100.0]
+            app["time"] = types.SimpleNamespace(time=lambda: now[0],
+                sleep=lambda _: engine.stop_evt.set())
+            self.assertTrue(engine._send(engine.color))
+            count = len(device.writes)
+            now[0] += 0.25
+            engine.run()
+            self.assertEqual(len(device.writes), count, "unchanged wire RGB must not resend")
+            now[0] += 2.0
+            engine.stop_evt.clear(); engine.run()
+            self.assertEqual(len(device.writes), count + 1, "heartbeat must still refresh RGB")
+            app["CFG"]["bgr_swap"] = not swapped
+            now[0] += 0.25
+            engine.stop_evt.clear(); engine.run()
+            self.assertEqual(len(device.writes), count + 2, "changing BGR must send immediately")
+            self.assertEqual(tuple(device.writes[-1][45:48]), backend.wire_rgb(engine.color))
+
     def test_connect_starts_monitor_and_snapshot_is_a_copy(self):
         backend = app_classes()["Backend"]()
         with patch.object(backend._manager, "start") as start:

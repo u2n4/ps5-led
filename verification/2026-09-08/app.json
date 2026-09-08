@@ -1,0 +1,36 @@
+{
+  "hardware": "simulated HID boundary; no hardware accessed",
+  "layout": {
+    "card_requested": 687,
+    "card_actual": 819
+  },
+  "renderer": {
+    "vendor": "NVIDIA Corporation",
+    "renderer": "NVIDIA GeForce RTX 3070/PCIe/SSE2",
+    "version": "4.6.0 NVIDIA 616.64"
+  },
+  "successful_rgb_only": true,
+  "bgr": true,
+  "disconnect_clears_preview": true,
+  "reconnect": true,
+  "gyro_default_off": true,
+  "gyro_toggle": true,
+  "stick_toggle": true,
+  "five_shells": true,
+  "bilingual_labels": true,
+  "hidden_frames": 0,
+  "effect_modes": [
+    "Manual",
+    "Sequence",
+    "Random",
+    "Rainbow",
+    "Pulse",
+    "Flash",
+    "Breathing",
+    "Heartbeat",
+    "Wave",
+    "Gradient",
+    "Battery"
+  ],
+  "callback_errors": []
+}
