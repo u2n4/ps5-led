@@ -71,9 +71,22 @@ function Remove-OldShortcuts {
 # ==============================================================================
 Write-Step "Downloading PS5 LED portable (no Python needed) ..."
 $exeOk = $false
+# Retry: a single DNS or connection blip is not a reason to fall back to a
+# completely different install strategy. Seen in testing -- one lookup failed
+# and the installer went off to install a Python runtime instead.
+$attempt = 0
+while (-not $exeOk -and $attempt -lt 3) {
+    $attempt++
+    if ($attempt -gt 1) {
+        Write-Warn "Download attempt $($attempt - 1) failed; retrying ..."
+        Start-Sleep -Seconds 3
+    }
+    try {
+        Invoke-WebRequest -Uri $ExeUrl -OutFile $ExeFile
+        if ((Get-Item $ExeFile).Length -gt 5MB) { $exeOk = $true }
+    } catch { }
+}
 try {
-    Invoke-WebRequest -Uri $ExeUrl -OutFile $ExeFile
-    if ((Get-Item $ExeFile).Length -gt 5MB) { $exeOk = $true }
     # Integrity: verify against the SHA256 manifest published with the release.
     # Manifest missing (older releases) -> skip; hash mismatch -> reject the EXE.
     if ($exeOk) {
@@ -113,6 +126,24 @@ if ($exeOk) {
     Write-Ok "Done! The app window should open now."
     Write-Host "`n    Next time, just double-click 'PS5 LED' on your Desktop." -ForegroundColor DarkGray
     Start-Process -FilePath $ExeFile -WorkingDirectory $InstallDir
+    return
+}
+
+# Opt-in only. Installing a Python runtime is a much bigger thing than the app
+# asked for, and doing it silently after a failed download is how people end up
+# with a broken environment they never chose. Default is to stop and say what
+# to do.
+if (-not $env:PS5LED_ALLOW_PYTHON_INSTALL) {
+    Write-Warn ""
+    Write-Warn "Could not download the portable app after 3 attempts."
+    Write-Warn "Nothing has been installed."
+    Write-Warn ""
+    Write-Warn "Download it by hand instead - it is one file, about 11 MB:"
+    Write-Warn "    https://github.com/u2n4/ps5-led/releases/latest"
+    Write-Warn ""
+    Write-Warn "Save PS5-LED.exe anywhere and double-click it. Nothing else is needed."
+    Write-Warn "(To install from source with Python instead, set"
+    Write-Warn " PS5LED_ALLOW_PYTHON_INSTALL=1 and run this again.)"
     return
 }
 

@@ -10,7 +10,7 @@
   -->
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>C:\Users\aliha\codAi\projects\dualled-pro-tk3d\tools\sandbox\stage</HostFolder>
+      <HostFolder>C:\Users\aliha\codAi\projects\dualled-pro\tools\sandbox\stage</HostFolder>
       <SandboxFolder>C:\host</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
