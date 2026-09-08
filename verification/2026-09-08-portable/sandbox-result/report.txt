@@ -1,0 +1,18 @@
+﻿
+[20:20:13] Windows Sandbox run
+[20:20:14] OS: Microsoft Windows 11 Enterprise
+[20:20:17] python present : no (as expected)
+[20:20:17] Python install dir present : False
+[20:20:17] EXE size : 10.6 MB
+[20:20:17] EXE bytes : 11068554
+[20:20:17] EXE SHA256 : 8A757FDD4E1B59CF8270026011470824658A2168FB43CC1CA5299DE7E5C0E2C2
+[20:20:17] launching ...
+[20:20:32] still running : True
+[20:20:32] preview backend : OpenGL
+[20:20:32] --- app.log ---
+[2026-09-08 20:20:21] preview: OpenGL
+[2026-09-08 20:20:21] native controller monitor started
+[2026-09-08 20:20:21] controller disconnected
+[20:20:35] screenshot saved
+[20:20:36] VERDICT: runs on a clean Windows with the 3D preview
+[20:20:36] done - close the sandbox; results are in the mapped folder
