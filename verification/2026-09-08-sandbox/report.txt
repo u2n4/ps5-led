@@ -1,0 +1,15 @@
+﻿
+[12:52:06] Windows Sandbox run
+[12:52:07] OS: Microsoft Windows 11 Enterprise
+[12:52:10] python present : no (as expected)
+[12:52:10] Python install dir present : False
+[12:52:10] EXE size : 12.9 MB
+[12:52:10] launching ...
+[12:52:14] still running : True
+[12:52:14] preview backend : OpenGL
+[12:52:15] --- app.log ---
+[2026-09-08 12:52:14] preview: OpenGL
+[2026-09-08 12:52:14] native controller monitor started
+[12:52:18] screenshot saved
+[12:52:18] VERDICT: runs on a clean Windows with the 3D preview
+[12:52:18] done - close the sandbox; results are in the mapped folder
