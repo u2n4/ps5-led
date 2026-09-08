@@ -15,9 +15,9 @@
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
   </MappedFolders>
-  <Networking>Disable</Networking>
+  <Networking>Default</Networking>
   <vGPU>Enable</vGPU>
   <LogonCommand>
-    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\host\run-in-sandbox.ps1</Command>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\host\run-installer-in-sandbox.ps1</Command>
   </LogonCommand>
 </Configuration>
