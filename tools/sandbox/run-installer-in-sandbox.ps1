@@ -60,8 +60,10 @@ try {
 Start-Sleep -Seconds 8
 
 # What did it actually put on disk?
-$installDir = Join-Path $env:LOCALAPPDATA 'PS5-LED'
-if (-not (Test-Path $installDir)) { $installDir = Join-Path $env:APPDATA 'PS5-LED' }
+# install.ps1 uses LOCALAPPDATA\DualLED-Pro. Guessing 'PS5-LED' listed an
+# empty directory and reported "never created" on a run that had in fact
+# installed correctly.
+$installDir = Join-Path $env:LOCALAPPDATA 'DualLED-Pro'
 Say ("install dir : " + $installDir)
 if (Test-Path $installDir) {
     Say "--- files it downloaded ---"
