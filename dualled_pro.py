@@ -352,10 +352,13 @@ class Backend:
         self._manager.start()
         return True
 
+    @staticmethod
+    def wire_rgb(rgb):
+        r,g,b = (clamp(channel) for channel in rgb)
+        return (b,g,r) if CFG.get("bgr_swap") else (r,g,b)
+
     def set_color(self, r,g,b):
-        r=clamp(r); g=clamp(g); b=clamp(b)
-        if CFG.get("bgr_swap"): r,g,b = b,g,r
-        return self._manager.write_colour((r,g,b))
+        return self._manager.write_colour(self.wire_rgb((r,g,b)))
 
     def get_battery(self):
         snap = self.snapshot()
@@ -437,8 +440,8 @@ class Engine(threading.Thread):
                 if m=="Manual":
                     # اللون ثابت → أرسل فقط عند التغيّر + نبضة تثبيت كل ثانيتين
                     # (set_color يرسل فورًا عند التغيير، فالحلقة هنا للتثبيت فقط → نوم أطول)
-                    with self._ol: cur = self.out
-                    if tuple(c) != tuple(cur) or (time.time() - self._last_apply) > 2.0:
+                    cur = self.b.snapshot()["applied_rgb"]
+                    if self.b.wire_rgb(c) != cur or (time.time() - self._last_apply) > 2.0:
                         self._send(c)
                     time.sleep(0.25)
 
@@ -1043,42 +1046,12 @@ class Controller3D(tk.Canvas):
         self.create_rectangle(*b0, *b1, outline=g, width=w)
 
     def _draw_lightbar_strip(self, flat, led, bg, th, side):
-        """شريط إضاءة واحد (polyline مسطّح) بتوهّج طبقي وتوقيع حسب الوضع."""
-        mode = self._mode
-        phase = self._anim
-        white = (255, 255, 255)
-        n = len(flat) // 2 - 1
-        # توهّج خارجي مضبوط — طبقات قليلة قريبة من الشريط (بدون زيادة)
+        """Fallback uses the same successful RGB as the native lightbar."""
         for i in range(3, 0, -1):
-            self.create_line(*flat, fill=self._hex(self._blend(bg, led, 0.07 + 0.06 * (3 - i))),
-                             width=th + i * max(2, th // 2) * 2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
-
-        def seg_color(k):
-            if mode == "Rainbow":
-                h = (phase / 360.0 + k / max(1, n) * 0.5 + side * 0.5) % 1.0
-                r_, g_, b_ = colorsys.hsv_to_rgb(h, 1.0, 1.0)
-                return (int(r_ * 255), int(g_ * 255), int(b_ * 255))
-            if mode == "Wave":
-                br = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(phase * 0.15 - k * 0.55))
-                return self._blend(bg, led, br)
-            if mode == "Sequence":
-                comet = (phase // 5) % max(1, n)
-                d = abs(k - comet)
-                return self._blend(led, white, 0.55) if d == 0 else self._blend(bg, led, max(0.15, 1.0 - d * 0.3))
-            if mode == "Random":
-                tbl = (0.4, 0.7, 1.0)
-                return self._blend(bg, led, tbl[((k * 73 + 29 + side * 41) % 100) % 3])
-            return None
-
-        if mode in ("Rainbow", "Wave", "Sequence", "Random"):
-            for k in range(n):
-                self.create_line(flat[k * 2], flat[k * 2 + 1], flat[k * 2 + 2], flat[k * 2 + 3],
-                                 fill=self._hex(seg_color(k)), width=th, capstyle=tk.ROUND)
-        else:
-            self.create_line(*flat, fill=self._hex(led), width=th,
-                             capstyle=tk.ROUND, joinstyle=tk.ROUND)
-            self.create_line(*flat, fill=self._hex(self._blend(led, white, 0.5)),
-                             width=max(1, th // 3), capstyle=tk.ROUND, joinstyle=tk.ROUND)
+            self.create_line(*flat, fill=self._hex(self._blend(bg, led, 0.07 + 0.06 * (3-i))),
+                             width=th+i*max(2,th//2)*2, capstyle=tk.ROUND, joinstyle=tk.ROUND)
+        self.create_line(*flat, fill=self._hex(led), width=th,
+                         capstyle=tk.ROUND, joinstyle=tk.ROUND)
 
 
 # --------------------------- i18n ---------------------------
@@ -1100,6 +1073,11 @@ STR = {
    "status_grad":"الحالة: تدرّج","status_batt":"الحالة: لون حسب البطارية",
    "shell_color":"لون اليد",
    "stick_view":"تدوير بالستيك",
+   "gyro_view":"تتبّع حركة اليد",
+   "view_help":"اسحب للتدوير · نقرتان لإعادة المنظر",
+   "view_connected":"متصل · لون مُرسل",
+   "view_waiting":"بانتظار اليد · اللون غير مُرسل",
+   "view_fallback":"عرض احتياطي ثنائي الأبعاد",
    "ctrl_not_found":"لم يتم العثور على يد التحكم."
  },
  "en": {
@@ -1119,6 +1097,11 @@ STR = {
    "status_grad":"Status: Gradient","status_batt":"Status: Battery color",
    "shell_color":"Shell Color",
    "stick_view":"Stick turns view",
+   "gyro_view":"Follow controller motion",
+   "view_help":"Drag to orbit · Double-click to reset",
+   "view_connected":"Connected · Sent colour",
+   "view_waiting":"Waiting for controller · Colour not sent",
+   "view_fallback":"Fallback 2D preview",
    "ctrl_not_found":"Controller not found."
  }
 }
@@ -1160,10 +1143,11 @@ class ControllerView(ttk.Frame):
         self._kw = dict(width=width, height=height, bg=bg)
         self._ctype = controller_type
         self._shell = "white"
-        self._led = (0, 170, 255)
+        self._led = (0, 0, 0)
         self._mode = "Manual"
         self._press_xy = None
         self._stick_orbit = True
+        self._gyro_enabled = False
         self.on_click = None          # set by App after construction
         self.gl = None
         self.canvas = None
@@ -1194,6 +1178,7 @@ class ControllerView(ttk.Frame):
             self.gl = None
             return False
         self.gl.orbit.stick_enabled = self._stick_orbit
+        self.gl.orbit.gyro_enabled = self._gyro_enabled
         self.gl.pack(fill="both", expand=True)
         # A click must still open the colour picker, but Button-1 already
         # drives the orbit. Bind alongside it (add="+") and treat a release
@@ -1216,6 +1201,7 @@ class ControllerView(ttk.Frame):
     def _on_gl_failure(self, exc):
         """The GL context died after starting. Swap in the Canvas, keep running."""
         self._gl_error = exc
+        log("OpenGL preview unavailable:", repr(exc))
         try:
             if self.gl is not None:
                 self.gl.destroy()
@@ -1288,8 +1274,9 @@ class ControllerView(ttk.Frame):
                 self._on_gl_failure(exc)
 
     def set_gyro_enabled(self, enabled):
+        self._gyro_enabled = bool(enabled)
         if self.gl is not None:
-            self.gl.orbit.gyro_enabled = bool(enabled)
+            self.gl.orbit.gyro_enabled = self._gyro_enabled
 
     def set_stick_orbit(self, enabled):
         """Let the right stick turn the view, or leave the view alone."""
@@ -1301,6 +1288,14 @@ class ControllerView(ttk.Frame):
         if self.gl is not None:
             self.gl.orbit.reset()
             self.gl.request_draw()
+
+    def fit_height(self, height):
+        """Keep the existing settings reachable when the window gets shorter."""
+        height = max(140, min(260, int(height)))
+        if height != self._kw["height"]:
+            self._kw["height"] = height
+            target = self.gl if self.gl is not None else self.canvas
+            if target is not None: target.configure(height=height)
 
 class TrayIcon:
     """أيقونة بجانب الساعة عبر Shell_NotifyIcon مباشرة — بدون أي مكتبات إضافية.
@@ -1654,14 +1649,36 @@ class App(tk.Tk):
         stickbox = ttk.Frame(preview_frame, style="Card.TFrame")
         stickbox.place(x=14, y=10, anchor="nw")
         self.stick_view_var = tk.BooleanVar(value=bool(CFG.get("stick_view", True)))
-        ttk.Checkbutton(stickbox, text=self.s["stick_view"],
+        self.stick_view_check = ttk.Checkbutton(stickbox, text=self.s["stick_view"],
                         variable=self.stick_view_var,
                         command=self._on_stick_view,
-                        style="DL.TCheckbutton").pack(side="left")
+                        style="DL.TCheckbutton")
+        self.stick_view_check.pack(anchor="w")
         self.ctrl3d.set_stick_orbit(self.stick_view_var.get())
+        # Gyro is opt-in on EVERY launch. Mouse/stick input retains priority.
+        self.gyro_view_var = tk.BooleanVar(value=False)
+        self.gyro_view_check = ttk.Checkbutton(stickbox, text=self.s["gyro_view"],
+                        variable=self.gyro_view_var,
+                        command=lambda: self.ctrl3d.set_gyro_enabled(self.gyro_view_var.get()),
+                        style="DL.TCheckbutton")
+        self.gyro_view_check.pack(anchor="w")
+        view_info = ttk.Frame(self.card, style="Card.TFrame")
+        view_info.pack(fill="x", padx=20, pady=(0,2))
+        self.view_help_var = tk.StringVar(value=self.s["view_help"])
+        ttk.Label(view_info, textvariable=self.view_help_var, style="Card.TLabel",
+                  font=("Segoe UI",9)).pack(side="left")
+        self.view_state_var = tk.StringVar(value=self.s["view_waiting"])
+        ttk.Label(view_info, textvariable=self.view_state_var, style="Card.TLabel",
+                  font=("Segoe UI",9)).pack(side="right")
+        # Visible credit links to the exact model, with full licence/modifications.
+        credit = ttk.Label(self.card,
+                  text='3D: "PS5 Controller" — Taohid Animation · CC BY 4.0',
+                  style="Card.TLabel", font=("Segoe UI",8), cursor="hand2")
+        credit.pack(anchor="e", padx=20, pady=(0,2))
+        credit.bind("<Button-1>", lambda e: os.startfile(str(Path(__file__).resolve().parent / "ATTRIBUTION.md")))
 
         # شريط المعاينة الصغير (لون فقط) — يعكس اللون المُطبّق فعليًا
-        self.preview = tk.Frame(self.card, bg=CFG.get("color","#00aaff"), height=20, bd=0, highlightthickness=0, cursor="hand2")
+        self.preview = tk.Frame(self.card, bg="#000000", height=20, bd=0, highlightthickness=0, cursor="hand2")
         self.preview.pack(padx=20, pady=(0, 6), fill="x"); self.preview.pack_propagate(False)
         self.preview.bind("<Button-1>", self.pick_color)
 
@@ -1758,6 +1775,8 @@ class App(tk.Tk):
         
         # تعامل مع إغلاق النافذة
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self._preview_resize_job = None
+        self.bind("<Configure>", self._queue_preview_fit, add="+")
 
         # عرض فوري بعد الإعداد
         self.update_idletasks(); self.deiconify()
@@ -1804,6 +1823,18 @@ class App(tk.Tk):
 
 
     # ---- helpers ----
+    def _queue_preview_fit(self, event):
+        if event.widget is not self: return
+        if self._preview_resize_job is not None:
+            self.after_cancel(self._preview_resize_job)
+        self._preview_resize_job = self.after(80, self._fit_preview)
+
+    def _fit_preview(self):
+        self._preview_resize_job = None
+        # Only the preview height adapts; settings keep their existing layout.
+        non_preview = self.card.winfo_reqheight() - self.ctrl3d._kw["height"]
+        self.ctrl3d.fit_height(self.card.winfo_height() - non_preview)
+
     def post_init(self):
         try:
             self.backend=Backend(prefer=CFG.get("backend","auto"))
@@ -1811,7 +1842,7 @@ class App(tk.Tk):
             if not ok:
                 messagebox.showerror("DualLED", self.s["ctrl_not_found"]); return
             self.engine=Engine(self.backend); self.engine.start()
-            log("controller detected:", self.backend.kind)
+            log("native controller monitor started")
             # مزامنة فورية
             self.engine.set_color(hex_to_rgb(CFG.get("color","#00aaff")))
             self.after(50, self.sync_preview_tick)
@@ -1828,7 +1859,6 @@ class App(tk.Tk):
                     self.engine.set_mode("Manual")
                     self.engine.set_color((0, 0, 0))
                 self.mode_disp.set(code_to_display(self.lang, "Manual"))
-                self.preview.configure(bg="#000000")
             elif key == "quit":
                 self.quit_app()
             elif key.startswith("profile:"):
@@ -1862,33 +1892,22 @@ class App(tk.Tk):
             flush_cfg()   # يلتقط آخر قيمة من الحفظ المخنوق
             hidden = self._ui_idle()
             if self.engine and not hidden:
-                with self.engine._ol:
-                    out = self.engine.out
+                sample = self.engine.b.snapshot()
+                out = sample.get("applied_rgb") or (0,0,0)
                 hx = rgb_to_hex(out)
                 if self.preview.cget('bg') != hx:
                     self.preview.configure(bg=hx)
-                # --- تزامن 100% مع يد التحكم المعروضة ---
+                sent = bool(sample.get("connected") and sample.get("applied_rgb") is not None)
+                state = self.s["view_connected" if sent else "view_waiting"]
+                if self.ctrl3d.backend == "canvas": state += " · " + self.s["view_fallback"]
+                self.view_state_var.set(state)
+                self.gyro_view_check.state(["!disabled"] if self.ctrl3d.backend == "gl" else ["disabled"])
+                self.stick_view_check.state(["!disabled"] if self.ctrl3d.backend == "gl" else ["disabled"])
                 if hasattr(self, 'ctrl3d'):
                     self.ctrl3d.set_led_color(*out)
-                    # The orbit needs the controller itself: the right stick
-                    # turns the model, and the gyro does too when it is on.
-                    # Same 33 ms tick, so nothing new is polled.
-                    # The backend hangs off the engine, not off App. This read
-                    # said self.b, which App does not have, and the except
-                    # below swallowed the AttributeError -- so every part sat
-                    # still and nothing said why. Report the first failure
-                    # instead of hiding it.
-                    backend = getattr(self.engine, 'b', None)
-                    if backend is not None and hasattr(self.ctrl3d, 'update_inputs'):
-                        try:
-                            self.ctrl3d.update_inputs(
-                                backend.snapshot(),
-                                self.bg.frame_data() if hasattr(self, 'bg') else None)
-                        except Exception as exc:
-                            if not getattr(self, '_inputs_warned', False):
-                                self._inputs_warned = True
-                                print("preview inputs unavailable: %r" % (exc,))
-        except Exception: pass
+                    self.ctrl3d.update_inputs(sample, self.bg.frame_data())
+        except Exception as exc:
+            log("preview sync err:", repr(exc))
         self.after(400 if hidden else 33, self.sync_preview_tick)
 
     def _on_stick_view(self):
@@ -1905,7 +1924,6 @@ class App(tk.Tk):
         if hasattr(self, 'ctrl3d'): self.ctrl3d.set_shell(key)
 
     def set_color_hex(self, hx):
-        self.preview.configure(bg=hx)
         rgb = hex_to_rgb(hx)
         if self.engine:
             # اختيار لون = قصدك لون ثابت → تحويل تلقائي لوضع "يدوي" لو كان وضع متحرك
@@ -1915,8 +1933,7 @@ class App(tk.Tk):
                 if hasattr(self, 'ctrl3d'): self.ctrl3d.set_mode("Manual")
                 self.status_var.set(self.s["status_manual"])
             self.engine.set_color(rgb)
-        # recolor the controller widget IMMEDIATELY (don't wait for the 33ms poll)
-        if hasattr(self, 'ctrl3d'): self.ctrl3d.set_led_color(*rgb)
+        # The preview consumes successful post-BGR writes on the next UI tick.
 
     def pick_color(self, e=None):
         """المنتقي مدمج في النافذة — النقر يومض إطاره للفت النظر إليه."""
@@ -2053,6 +2070,9 @@ class App(tk.Tk):
         cur_code = display_to_code(self.lang, self.mode_disp.get()) if self.mode_disp.get() in MODE_DISPLAY[self.lang] else CFG.get("last_mode","Manual")
         
         self.lang=new_lang; self.s=STR[new_lang]
+        self.stick_view_check.configure(text=self.s["stick_view"])
+        self.gyro_view_check.configure(text=self.s["gyro_view"])
+        self.view_help_var.set(self.s["view_help"])
         
         # تحديث كافة النصوص والعناصر
         self.title(self.s["title"])
@@ -2180,7 +2200,6 @@ class App(tk.Tk):
         if not snap or not self.engine: return
         self.engine.load_from(snap)
         self.sp.set(self.engine.speed); self.rb.set(self.engine.rb); self.duty.set(self.engine.duty)
-        self.preview.configure(bg=rgb_to_hex(self.engine.color))
         self._after_profile_load()
 
     def save_profile(self):

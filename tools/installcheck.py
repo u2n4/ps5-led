@@ -10,6 +10,7 @@ packages, and once as a machine that did not. The second is the one that
 matters, because a pip failure after a PowerShell install is the original bug
 this whole project exists to fix.
 """
+import os
 import pathlib
 import shutil
 import subprocess
@@ -27,20 +28,43 @@ ASSETS = ["dualsense.mesh.json.gz"]
 OPTIONAL_ASSETS = ["dualsense-svgrepo.svg", "app.ico"]
 
 PROBE = '''
-import sys, tkinter as tk
+import importlib, sys, time, tkinter as tk
 from tkinter import ttk
+# Import every installed native module without opening/enumerating a controller.
+for name in ("hid_win", "dualsense", "dualshock4", "crc", "device"):
+    importlib.import_module("ps5led." + name)
 import dualled_pro as dp
-root = tk.Tk(); root.withdraw()
+root = tk.Tk(); root.title("DualLED fresh-install verification")
+root.geometry("700x300")
 ttk.Style().configure("Card.TFrame")
-view = dp.ControllerView(root, controller_type="ps5", width=680, height=260, bg="#0b0f14")
-view.on_click = lambda e=None: None
-view.set_led_color(0, 170, 255)
-view.set_shell("red")
-view.set_mode("Rainbow")
-view.redraw()
-view.update_inputs({"connected": False})
-print("BACKEND:" + view.backend)
-root.destroy()
+try:
+    view = dp.ControllerView(root, controller_type="ps5", width=680, height=260, bg="#0b0f14")
+    view.pack(fill="both", expand=True)
+    view.on_click = lambda e=None: None
+    view.set_led_color(0, 170, 255)
+    view.set_shell("red")
+    view.set_mode("Rainbow")
+    view.redraw()
+    view.update_inputs({"connected": False})
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        root.update()
+        if view.backend == "canvas":
+            assert EXPECTED_BACKEND == "canvas", repr(getattr(view, "_gl_error", "unexpected fallback"))
+            if view.canvas.find_all(): break
+        elif view.gl is not None and view.gl.frame_count > 0:
+            break
+        time.sleep(0.01)
+    assert view.backend == EXPECTED_BACKEND, (view.backend, EXPECTED_BACKEND)
+    if view.backend == "gl":
+        assert view.gl.frame_count > 0, "OpenGL never rendered a frame"
+        assert view.gl.renderer_info, "OpenGL context never initialized"
+    else:
+        assert view.canvas.find_all(), "fallback never rendered a drawing"
+    print("BACKEND:" + view.backend)
+    print("Native HID modules imported; no device opened.")
+finally:
+    root.destroy()
 '''
 
 BLOCK = '''
@@ -79,15 +103,18 @@ def build(target):
     for name in OPTIONAL_ASSETS:
         src = REPO / "assets" / name
         if src.is_file():
-            shutil.copy2(src, target / "assets" / name)
+            shutil.copy2(src, target / name if name == "app.ico" else target / "assets" / name)
     return missing
 
 
 def run(target, block):
-    script = ("import sys\n" + (BLOCK if block else "")) + PROBE
-    proc = subprocess.run([sys.executable, "-c", script], cwd=str(target),
+    expected = "canvas" if block else "gl"
+    script = ("import sys\nEXPECTED_BACKEND = %r\n" % expected + (BLOCK if block else "")) + PROBE
+    env = dict(os.environ, APPDATA=str(target.parent / ("config-" + expected)),
+               PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
+    proc = subprocess.run([sys.executable, "-c", script], cwd=str(target), env=env,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=180)
+                          timeout=30)
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
@@ -117,7 +144,7 @@ try:
     elif failures:
         print("VERDICT: a fresh install does NOT run —", "; ".join(failures))
     else:
-        print("VERDICT: a fresh install runs, with or without the optional packages")
+        print("VERDICT: fresh files import native HID and render both previews; device operation untested")
     sys.exit(1 if (missing or failures) else 0)
 finally:
     shutil.rmtree(tmp, ignore_errors=True)

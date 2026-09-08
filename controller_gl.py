@@ -109,6 +109,8 @@ class Orbit:
         timestamp = sample.get("sensor_timestamp")
         stick = sample.get("right_stick", (0, 0))
         sx, sy = (self.deadzone(float(v)) for v in stick)
+        if not self.stick_enabled:
+            sx = sy = 0.0
         if timestamp is not None and timestamp != self.last_timestamp:
             previous_ts = self.last_timestamp
             self.last_timestamp = timestamp
@@ -373,7 +375,8 @@ class ControllerGL(OpenGLFrame):
                 if not index_list:
                     continue
                 indices = (ctypes.c_uint * len(index_list))(*index_list)
-                self.meshes.append((mesh, vertices, normals, indices, uvs,
+                material = {key: mesh[key] for key in ("name", "slot", "texture") if key in mesh}
+                self.meshes.append((material, vertices, normals, indices, uvs,
                                     part, pivot_for(part, mesh, index_list)))
         # Release decoded JSON arrays once the render buffers own them.
         self.model = {"bounds": self.model.get("bounds")}
