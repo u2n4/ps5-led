@@ -36,3 +36,4 @@ desktop.ini
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+tools/sandbox/stage/
