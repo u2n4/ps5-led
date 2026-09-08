@@ -16,6 +16,8 @@ dist/
 *.egg-info/
 *.egg
 *.spec
+# except the hand-written build recipe, which must not drift again
+!PS5-LED.spec
 *.exe
 
 # App runtime data / logs
