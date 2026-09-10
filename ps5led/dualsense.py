@@ -46,9 +46,16 @@ _BLUE = 46
 
 FLAG1_MIC_MUTE_LED = 0x01
 FLAG1_LIGHTBAR = 0x04
+FLAG1_RELEASE_LEDS = 0x08   # take the LEDs back from the wireless firmware
 FLAG1_PLAYER_INDICATOR = 0x10
 FLAG2_LIGHTBAR_SETUP = 0x02
 LIGHTBAR_SETUP_LIGHT_OUT = 0x02
+
+# Sensor-timestamp value at which the controller's Bluetooth connection
+# animation is over and a RELEASE_LEDS pulse is honoured. SDL's constant
+# (SDL_hidapi_ps5.c, connection_complete); a pulse sent earlier is ignored
+# and the wireless firmware keeps painting the bar underneath the host.
+BT_CONNECTION_COMPLETE_TIMESTAMP = 10_200_000
 
 # Where the common block begins, per transport.
 _COMMON_OFFSET = {TRANSPORT_USB: 1, TRANSPORT_BT: 3}
@@ -84,13 +91,15 @@ def output_length_for(transport, reported_length):
 
 
 def build_output(transport, length, rgb=None, player_leds=None, mic_led=None,
-                 lightbar_setup=False, seq=0):
+                 lightbar_setup=False, seq=0, release_leds=False):
     """Build one DualSense output report.
 
     ``length`` must be the value Windows reported as OutputReportByteLength for
     USB; Bluetooth is always ``BT_OUTPUT_SIZE``. Pass ``lightbar_setup=True``
     once per connection before the first colour, otherwise the controller stays
-    in its power-on animation and ignores RGB.
+    in its power-on animation and ignores RGB. Pass ``release_leds=True`` once
+    per Bluetooth connection, after BT_CONNECTION_COMPLETE_TIMESTAMP, or the
+    wireless firmware keeps painting the bar underneath every colour written.
     """
     if transport not in _COMMON_OFFSET:
         raise ValueError("unknown transport: %r" % (transport,))
@@ -122,6 +131,8 @@ def build_output(transport, length, rgb=None, player_leds=None, mic_led=None,
     if mic_led is not None:
         flag1 |= FLAG1_MIC_MUTE_LED
         report[offset + _MUTE_LED] = 1 if mic_led else 0
+    if release_leds:
+        flag1 |= FLAG1_RELEASE_LEDS
     if flag1:
         report[offset + _VALID_FLAG1] = flag1
 

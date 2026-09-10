@@ -31,6 +31,15 @@ class Sink:
     def update(self, **values): self.values.update(values)
 
 
+def input_report(timestamp=20_000_000):
+    """A USB 0x01 input report carrying only a sensor timestamp. parse_input
+    accepts it on either transport, which keeps the fixture CRC-free. The
+    default is well past ds.BT_CONNECTION_COMPLETE_TIMESTAMP: a settled pad."""
+    body = bytearray(63)
+    struct.pack_into("<I", body, 27, timestamp)
+    return bytes([0x01]) + bytes(body)
+
+
 class FakeDevice:
     last_error = "fixture has no calibration"
     def __init__(self): self.writes = []; self.closed = False; self.failure = False
@@ -38,6 +47,11 @@ class FakeDevice:
         if self.failure: raise OSError("fixture write failure")
         self.writes.append(packet)
     def get_feature(self, *args): return None
+    def read(self, timeout_ms):
+        # A settled controller, so a Bluetooth connect's LED release does not
+        # wait on the connection animation. Tests that need silence or a
+        # specific sample assign their own read() after connect().
+        return input_report()
     def close(self): self.closed = True
 
 
