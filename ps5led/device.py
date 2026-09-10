@@ -52,6 +52,16 @@ DEFAULT_RGB = (0, 170, 255)
 # so this is provably the only writer and no second thread can be inside
 # HidDevice.write() at the same time.
 BOOT_COLOUR_WRITES = 3
+
+# Longest we wait, per Bluetooth connect, for the controller's sensor timestamp
+# to pass ds.BT_CONNECTION_COMPLETE_TIMESTAMP before releasing the LEDs anyway.
+# The timestamp is the exact signal (SDL's); a pad that has been on for a while
+# passes it on its first report. The wall clock is the second, coarser signal:
+# the connect animation lasts ~3.4 s from the pad's power-on, and we can only
+# have opened the pad after that power-on, so six seconds of OUR connection
+# also guarantees the animation is over -- even for a pad whose reports never
+# parse (calibration read refused, so it stays in the reduced report).
+BT_RELEASE_WAIT_SECONDS = 6.0
 BOOT_COLOUR_INTERVAL = 0.45
 
 
@@ -300,6 +310,40 @@ class DeviceManager(object):
     def _drop(self, device):
         self._close(only=device)
 
+    def _release_bluetooth_leds(self, device, info):
+        """Take the lightbar away from the wireless firmware. Bluetooth only.
+
+        Over Bluetooth the DualSense's wireless firmware owns the LEDs: it
+        runs the connect animation and then keeps painting its own colour,
+        and a host that just writes RGB fights it -- the bar flickers between
+        the two. The host must pulse RELEASE_LEDS once, and the controller
+        ignores the pulse while its connection animation is still running.
+        SDL waits for the sensor timestamp to reach
+        BT_CONNECTION_COMPLETE_TIMESTAMP before sending it; so do we, capped
+        by BT_RELEASE_WAIT_SECONDS. USB has no wireless firmware in the loop
+        and keeps the LIGHT_OUT setup instead.
+
+        Reads the device directly: the reader thread does not own the handle
+        until _connect publishes it, so this is the only reader here.
+        """
+        deadline = time.monotonic() + BT_RELEASE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            if self._stop.is_set():
+                # Cancelled: touch nothing. The caller closes the unpublished
+                # handle and gives up on this connect.
+                return False
+            data = device.read(timeout_ms=READ_TIMEOUT_MS)
+            if not data:
+                continue
+            sample = ds.parse_input(data)
+            if sample is not None and sample.timestamp >= ds.BT_CONNECTION_COMPLETE_TIMESTAMP:
+                break
+        if self._stop.is_set():
+            return False
+        self._write_packet(device, ds.build_output(
+            info.transport, self._ds5_output_length(info), release_leds=True, seq=0))
+        return True
+
     def _connect(self):
         from .hid_win import HidDevice, enumerate_devices
 
@@ -356,17 +400,21 @@ class DeviceManager(object):
                             "calibration feature report %#04x returned implausible "
                             "data (%d bytes): %s"
                             % (ds.FEATURE_CALIBRATION, len(raw), raw.hex()))
-                # One setup packet per connection, or RGB is ignored while the
-                # controller finishes its power-on animation.
-                self._write_packet(device, ds.build_output(
-                    info.transport, self._ds5_output_length(info),
-                    lightbar_setup=True, seq=0))
+                if info.transport == ds.TRANSPORT_BT:
+                    if not self._release_bluetooth_leds(device, info):
+                        return False
+                else:
+                    # One setup packet per connection, or RGB is ignored while
+                    # the controller finishes its power-on animation.
+                    self._write_packet(device, ds.build_output(
+                        info.transport, self._ds5_output_length(info),
+                        lightbar_setup=True, seq=0))
             # Always follow the setup packet with a colour, and always before
             # publishing self._device.
             #
-            # Unconditionally, because the setup packet above is
-            # LIGHTBAR_SETUP_LIGHT_OUT: it takes the bar OUT of the boot
-            # animation by turning it off, and nothing turns it back on. A
+            # Unconditionally, because the setup above (LIGHTBAR_SETUP_LIGHT_OUT
+            # on USB, RELEASE_LEDS on Bluetooth) only takes the bar away from
+            # the firmware's animation; nothing in it paints a colour. A
             # caller that never writes a colour -- --doctor is exactly that --
             # would otherwise connect, report success, and leave the lightbar
             # dark, which is the failure this whole branch exists to end. The
