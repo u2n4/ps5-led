@@ -339,6 +339,15 @@ class EMA:
 
 # --------------------------- Engine ---------------------------
 class Engine(threading.Thread):
+    # Bluetooth saturates above ~30 output reports/s: measured on real
+    # hardware, a 60 Hz Rainbow dropped the link at 18.9 s and 65 writes
+    # failed, while 30 Hz and USB at 60 Hz were clean. Animation loops are
+    # decimated to these rates; forced writes (user intent, heartbeat) never.
+    # Class attributes, not module globals: the engine is also exec'd in
+    # isolation by the test harness, which extracts only the class bodies.
+    BT_MIN_INTERVAL  = 1.0 / 30.0
+    USB_MIN_INTERVAL = 0.0
+
     def __init__(self, backend: Backend):
         super().__init__(daemon=True)
         self.b=backend; self.stop_evt=threading.Event()
@@ -352,6 +361,7 @@ class Engine(threading.Thread):
         self.color=hex_to_rgb(self.color_hex)
         self._ol = threading.Lock(); self.out = self.color
         self._last_apply = 0.0   # 0 = أول إرسال يتم فورًا
+        self._last_write_at = 0.0  # per-transport rate gate; see BT_MIN_INTERVAL
 
     # ---- profiles helpers
     def snapshot(self):
@@ -365,9 +375,19 @@ class Engine(threading.Thread):
             self.set_color(hex_to_rgb(snap.get("color", rgb_to_hex(self.color))))
         except Exception: pass
 
-    def _send(self, rgb):
+    def _send(self, rgb, force=False):
         try:
+            if not force:
+                # Skip frames that would drive this transport past its rate.
+                # A skip is not a failure: the next tick carries a fresher
+                # colour, so returning True keeps the caller's bookkeeping
+                # (the manual heartbeat, auto-sleep) honest.
+                transport = self.b.snapshot().get("transport")
+                min_gap = self.BT_MIN_INTERVAL if transport == "bt" else self.USB_MIN_INTERVAL
+                if min_gap and (time.time() - self._last_write_at) < min_gap:
+                    return True
             if not self.b.set_color(*rgb): return False
+            self._last_write_at = time.time()
             applied = self.b.snapshot()["applied_rgb"]
             if applied is None: return False
             with self._ol:
@@ -388,7 +408,7 @@ class Engine(threading.Thread):
     def set_duty(self,v): self.duty=float(v); CFG["flash_duty"]=self.duty; save_cfg_throttled(CFG)
     def set_color(self,rgb):
         self.color=tuple(int(c) for c in rgb); CFG["color"]=rgb_to_hex(self.color); save_cfg_throttled(CFG)
-        if self.mode=="Manual": self._send(self.color)
+        if self.mode=="Manual": self._send(self.color, force=True)
 
 
 
@@ -404,7 +424,7 @@ class Engine(threading.Thread):
                     # (set_color يرسل فورًا عند التغيير، فالحلقة هنا للتثبيت فقط → نوم أطول)
                     cur = self.b.snapshot()["applied_rgb"]
                     if self.b.wire_rgb(c) != cur or (time.time() - self._last_apply) > 2.0:
-                        self._send(c)
+                        self._send(c, force=True)
                     time.sleep(0.25)
 
                 elif m=="Battery":
