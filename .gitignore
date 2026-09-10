@@ -39,3 +39,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 tools/sandbox/stage/
+# An 11 MB binary and a graph dump were left untracked beside their reports;
+# neither belongs in history.
+verification/**/PS5-LED.exe
+graphify-out/
