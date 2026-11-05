@@ -7,8 +7,7 @@ PS5 LED — v2 (DualSense SVG Edition)
 - كشف تلقائي لنوع اليد (PS5/PS4) وعرض النموذج الصحيح
 - كل المزايا السابقة محفوظة: ملفات تعريف، خمول تلقائي، تأثيرات، إلخ
 التشغيل (ويندوز):
-    pip install -U pydualsense hidapi
-    python "V9 - Copy.py"
+    python dualled_pro.py
 """
 
 import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, zlib, queue
