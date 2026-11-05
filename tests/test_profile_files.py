@@ -51,7 +51,7 @@ class ProfileFileTests(unittest.TestCase):
         self.assertEqual(doc, {"format": "ps5led-profiles", "version": 1, "profiles": {"Fortnite": GOOD}})
 
     def test_export_refuses_a_saved_profile_that_is_not_valid_and_writes_nothing(self):
-        with self.assertRaisesRegex(dp.ProfileFileError, r"Profile 'Broken' has speed 9; it must be from 0\.1 to 5"):
+        with self.assertRaisesRegex(dp.ProfileFileError, r"Profile 'Broken' has speed 9\.0; it must be from 0\.1 to 5"):
             dp.write_profile_file(self.path, {"Broken": dict(GOOD, speed=9.0)})
         self.assertFalse(self.path.exists())
 
@@ -120,6 +120,7 @@ class ProfileFileTests(unittest.TestCase):
             "blank": ("   ", "A profile name is empty."),
             "too long": ("x" * (dp.PROFILE_NAME_MAX + 1), "is longer than 40 characters"),
             "control character": ("bad\nname", "contains a control character"),
+            "lone surrogate": ("\ud800", "is not valid text"),
         }
         for label, (name, fragment) in cases.items():
             with self.subTest(label):
@@ -129,6 +130,19 @@ class ProfileFileTests(unittest.TestCase):
     def test_a_file_over_the_size_limit_is_refused_before_it_is_read(self):
         self.write_text("x" * (dp.PROFILE_FILE_MAX_BYTES + 1))
         self.assertRefused("is larger than")
+
+    def test_huge_numbers_are_refused_without_crashing(self):
+        self.write_document(document({"Fortnite": dict(GOOD, speed=10 ** 401)}))
+        self.assertRefused("Profile 'Fortnite' has speed")
+        self.write_text('{"format": "ps5led-profiles", "version": 1, "profiles": {"Fortnite": '
+                        '{"mode": "Manual", "speed": ' + "1" * 5000 + ', "rainbow_brightness": 0.9, '
+                        '"flash_duty": 0.5, "color": "#3b82f6"}}}')
+        with self.assertRaises(dp.ProfileFileError):
+            dp.read_profile_file(self.path)
+
+    def test_the_settings_file_is_refused_as_an_export_target(self):
+        with self.assertRaisesRegex(dp.ProfileFileError, "is the settings file"):
+            dp.write_profile_file(dp.CFG_FILE, {"Fortnite": dict(GOOD)})
 
     def test_a_missing_file_is_reported(self):
         with self.assertRaisesRegex(dp.ProfileFileError, "Cannot read"):
@@ -146,6 +160,14 @@ class ProfileFileTests(unittest.TestCase):
                 dp.import_profile_file_into_settings(self.path)
         self.assertEqual(cfg, {"profiles": {"Default": GOOD}})
         save.assert_not_called()
+
+    def test_a_settings_file_that_cannot_be_written_is_reported_and_nothing_changes(self):
+        cfg = {"profiles": {"Default": dict(GOOD)}}
+        self.write_document(document({"Night": dict(GOOD, color="#101020")}))
+        with patch.object(dp, "CFG", cfg), patch.object(dp, "save_cfg", return_value=False):
+            with self.assertRaisesRegex(dp.ProfileFileError, "could not be saved"):
+                dp.import_profile_file_into_settings(self.path)
+        self.assertEqual(cfg, {"profiles": {"Default": GOOD}})
 
     def test_an_import_adds_new_profiles_and_replaces_same_named_ones(self):
         cfg = {"profiles": {"Default": dict(GOOD, color="#000000"), "Keep": dict(GOOD)}}

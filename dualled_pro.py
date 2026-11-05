@@ -93,8 +93,10 @@ def load_cfg():
 def save_cfg(cfg):
     try:
         CFG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
     except Exception as e:
         log("cfg save err:", e)
+        return False
 
 # خنق الحفظ للمسارات الساخنة (سحب المنتقي/المنزلقات): كتابة واحدة كحد أقصى بالثانية،
 # مع flush لاحق يضمن عدم ضياع آخر قيمة.
@@ -2420,6 +2422,10 @@ _PROFILE_HEX    = re.compile(r"#[0-9a-fA-F]{6}")
 class ProfileFileError(ValueError):
     """A profile file or saved profile that cannot be used. str(error) is the message to show."""
 
+def _short(value):
+    text = repr(value)
+    return text if len(text) <= 24 else text[:21] + "..."
+
 def _profile_name(name):
     if not isinstance(name, str) or not name.strip():
         raise ProfileFileError("A profile name is empty.")
@@ -2427,6 +2433,11 @@ def _profile_name(name):
         raise ProfileFileError(f"Profile name '{name[:20]}...' is longer than {PROFILE_NAME_MAX} characters.")
     if any(ord(ch) < 32 for ch in name):
         raise ProfileFileError(f"Profile name {name!r} contains a control character.")
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        # A JSON escape such as \ud800 decodes to a lone surrogate, which cannot be saved as UTF-8.
+        raise ProfileFileError(f"Profile name {name!r} is not valid text: it has an unpaired surrogate.") from None
     return name
 
 def _profile_data(name, data):
@@ -2448,10 +2459,11 @@ def _profile_data(name, data):
     clean = {"mode": data["mode"]}
     for key, (low, high) in _PROFILE_RANGES.items():
         value = data[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ProfileFileError(f"{where} has a {key} that is not a number.")
+        # Compare before any float() call: a huge integer would overflow, and NaN fails every comparison.
         if not low <= value <= high:
-            raise ProfileFileError(f"{where} has {key} {value:g}; it must be from {low:g} to {high:g}.")
+            raise ProfileFileError(f"{where} has {key} {_short(value)}; it must be from {low:g} to {high:g}.")
         clean[key] = float(value)
     clean["color"] = colour.lower()
     return clean
@@ -2476,6 +2488,9 @@ def read_profile_file(path):
         raise ProfileFileError(f"{path} is not UTF-8 text.") from e
     except json.JSONDecodeError as e:
         raise ProfileFileError(f"{path} is not valid JSON (line {e.lineno}, column {e.colno}): {e.msg}.") from e
+    except ValueError as e:
+        # Python refuses integers with more than 4300 digits; that raises ValueError, not a JSON error.
+        raise ProfileFileError(f"{path} cannot be read: {e}.") from e
     except RecursionError as e:
         raise ProfileFileError(f"{path} is nested too deeply to be a profile file.") from e
     if not isinstance(doc, dict):
@@ -2496,19 +2511,31 @@ def write_profile_file(path, profiles):
     if not checked:
         raise ProfileFileError("There are no saved profiles to export.")
     doc = {"format": PROFILE_FILE_FORMAT, "version": PROFILE_FILE_VERSION, "profiles": checked}
+    target = Path(path)
+    if target.resolve() == CFG_FILE.resolve():
+        raise ProfileFileError(f"{path} is the settings file. Choose another name for the export.")
+    # Write beside the target and replace it in one step, so a failed write never leaves a truncated file.
+    part = target.with_name(f"{target.name}.{os.getpid()}.part")
     try:
-        Path(path).write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        part.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(part, target)
     except OSError as e:
+        try:
+            part.unlink()
+        except OSError:
+            pass
         raise ProfileFileError(f"Cannot write {path}: {e.strerror or e}.") from e
     return len(checked)
 
 def import_profile_file_into_settings(path):
     """Check a profile file, then merge its profiles into the saved settings. Returns (added, replaced)."""
     incoming = read_profile_file(path)  # raises before anything is changed
-    saved = CFG.setdefault("profiles", {})
-    added = sum(1 for name in incoming if name not in saved)
-    saved.update(incoming)
-    save_cfg(CFG)
+    merged = dict(CFG.get("profiles", {}))
+    added = sum(1 for name in incoming if name not in merged)
+    merged.update(incoming)
+    if not save_cfg(dict(CFG, profiles=merged)):
+        raise ProfileFileError("The profiles could not be saved to the settings file. Check that its folder is writable.")
+    CFG["profiles"] = merged  # the live settings change only after the file has been written
     return added, len(incoming) - added
 
 # --------------------------- Headless CLI ---------------------------
@@ -2573,6 +2600,10 @@ def _apply_colour_headless(rgb):
     finally:
         backend.close()
 
+def _claim_global_mutex():
+    """True only when this process holds the global lock. A failed CreateMutexW does not count as held."""
+    return bool(_acquire_global_mutex() and _win_handles["mutex"])
+
 def run_headless(args):
     """Run the one action parse_cli() chose. Returns the exit code: 0 when done, 1 when it failed."""
     if args.export_profiles is not None:
@@ -2583,8 +2614,11 @@ def run_headless(args):
         print(f"Exported {count} profile(s) to {args.export_profiles}.")
         return 0
     # The running app owns the controller and the saved settings. A second writer would fight it for both.
-    if os.name == "nt" and not _acquire_global_mutex():
+    if os.name == "nt" and not _claim_global_mutex():
         return _cli_fail("PS5 LED is already running. Close it, then run this command again.")
+    # Reload the settings now that the lock is held: a run that finished after this one started may have saved.
+    CFG.clear()
+    CFG.update(load_cfg())
     if args.import_profiles is not None:
         try:
             added, replaced = import_profile_file_into_settings(args.import_profiles)
