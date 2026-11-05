@@ -32,7 +32,10 @@ function Get-PS5LEDDownload {
 function New-PS5LEDShortcut {
     param([string]$Executable, [string]$WorkingDirectory)
     # COM saves in an ASCII temporary path before moving to an Arabic desktop.
-    $temporary = Join-Path $env:TEMP ("ps5led-" + [guid]::NewGuid().ToString("N") + ".lnk")
+    # CreateShortcut().Save() fails in any non-ASCII folder, and %TEMP% sits in the
+    # profile folder, so an Arabic profile name needs another ASCII folder.
+    $temporaryRoot = if ($env:TEMP -notmatch '[^\x00-\x7F]') { $env:TEMP } elseif ($env:PUBLIC -notmatch '[^\x00-\x7F]') { $env:PUBLIC } else { Join-Path $env:SystemRoot "Temp" }
+    $temporary = Join-Path $temporaryRoot ("ps5led-" + [guid]::NewGuid().ToString("N") + ".lnk")
     try {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($temporary)
