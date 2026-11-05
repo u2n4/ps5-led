@@ -61,6 +61,7 @@ started = time.monotonic()
 engine.start()
 time.sleep(SECONDS)
 engine.stop_evt.set(); engine.join(timeout=3)
+engine_stuck = engine.is_alive()
 stopped_at = time.monotonic()
 backend.close()
 transitions = [t for t in transitions if t[0] < stopped_at]
@@ -71,7 +72,9 @@ print("write failures             : %d" % failed[0])
 print("connect transitions        : %d" % len(transitions))
 for ts, conn, tr in transitions:
     print("    t=%.2fs  %s  %s" % (ts - started, "CONNECTED" if conn else "DROPPED", tr))
-if failed[0] or sent[0] == 0 or len(transitions) > 1:
+if engine_stuck:
+    print("VERDICT: the engine thread was still running 3 s after stop")
+elif failed[0] or sent[0] == 0 or len(transitions) > 1:
     print("VERDICT: the engine sent no frames, or still fails or drops the link on this transport")
 else:
     print("VERDICT: clean -- no failures, no drops, over %s" % snap.get("transport"))

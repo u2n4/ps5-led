@@ -27,6 +27,7 @@ import time
 REPO = pathlib.Path(__file__).resolve().parent.parent
 EXE = REPO / "dist" / "PS5-LED.exe"
 RUN_SECONDS = 25
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def clean_env(appdata):
@@ -87,7 +88,7 @@ def main():
                 # first version stopped at "preview:" and terminated the app a
                 # second before it logged "controller connected", so a working
                 # run read as a controller that was never found.
-                if "controller connected" in text or "controller disconnected" in text and (
+                if ("controller connected" in text or "controller disconnected" in text) and (
                         time.time() > deadline - RUN_SECONDS + 12):
                     break
             if proc.poll() is not None:
@@ -102,7 +103,7 @@ def main():
         text = log_path.read_text(encoding="utf-8", errors="replace") if log_path else ""
         if text:
             print("\n--- its log ---")
-            print(text.strip()[-900:])
+            print(ANSI_ESCAPE.sub("", text).strip()[-900:])
 
         backend = None
         m = re.search(r"preview: (OpenGL|built-in drawing)", text)
