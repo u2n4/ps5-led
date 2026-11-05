@@ -126,13 +126,16 @@ try {
 } catch { Say ("screenshot failed: " + $_.Exception.Message) }
 
 Say ""
+$passed = $false
 if ($backend -eq 'OpenGL' -and $proc -and $files.Count -eq 1 -and
     $files[0].Name -eq 'PS5-LED.exe' -and (Test-Path $lnk) -and
     -not $pyAfter -and -not $sitePkgs) {
     Say "VERDICT: one EXE, no Python, no pip - and the 3D preview came up"
+    $passed = $true
 } elseif ($pyAfter -or $sitePkgs) {
     Say "VERDICT: it installed Python or pip packages - the portable path did NOT hold"
 } else {
     Say "VERDICT: not proven - no Python or pip was installed, but a check above did not pass"
 }
 Say "done - results are in the mapped folder"
+if (-not $passed) { exit 1 }
