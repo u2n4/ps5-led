@@ -71,7 +71,7 @@ print("write failures             : %d" % failed[0])
 print("connect transitions        : %d" % len(transitions))
 for ts, conn, tr in transitions:
     print("    t=%.2fs  %s  %s" % (ts - started, "CONNECTED" if conn else "DROPPED", tr))
-if failed[0] or len(transitions) > 1:
-    print("VERDICT: the engine still fails or drops the link on this transport")
+if failed[0] or sent[0] == 0 or len(transitions) > 1:
+    print("VERDICT: the engine sent no frames, or still fails or drops the link on this transport")
 else:
     print("VERDICT: clean -- no failures, no drops, over %s" % snap.get("transport"))
