@@ -25,7 +25,9 @@ function Say($text) {
 
 Say "Real installer run, clean Windows"
 Say ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
-$py = Get-Command python -ErrorAction SilentlyContinue
+# The WindowsApps python.exe is an App Execution Alias stub, not an install.
+$py = Get-Command python -All -ErrorAction SilentlyContinue |
+      Where-Object { $_.Source -and $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
 Say ("python before : " + $(if ($py) { $py.Source } else { "not installed" }))
 
 # LogonCommand fires the moment the desktop appears, which is before the
@@ -82,7 +84,8 @@ if (Test-Path $installDir) {
 }
 
 # Did it install Python or any pip package behind our back?
-$pyAfter = Get-Command python -ErrorAction SilentlyContinue
+$pyAfter = Get-Command python -All -ErrorAction SilentlyContinue |
+           Where-Object { $_.Source -and $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
 Say ("python after  : " + $(if ($pyAfter) { $pyAfter.Source } else { "still not installed" }))
 $sitePkgs = @()
 foreach ($root in @("$env:LOCALAPPDATA\Programs\Python", "$env:APPDATA\Python", "C:\Program Files\Python*")) {
@@ -130,6 +133,6 @@ if ($backend -eq 'OpenGL' -and $proc -and $files.Count -eq 1 -and
 } elseif ($pyAfter -or $sitePkgs) {
     Say "VERDICT: it installed Python or pip packages - the portable path did NOT hold"
 } else {
-    Say "VERDICT: nothing extra was installed, but the 3D preview did not come up"
+    Say "VERDICT: not proven - no Python or pip was installed, but a check above did not pass"
 }
 Say "done - results are in the mapped folder"
