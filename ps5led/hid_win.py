@@ -221,7 +221,8 @@ def _describe(handle, path):
     attrs = HIDD_ATTRIBUTES()
     attrs.Size = ctypes.sizeof(attrs)
     if not _hid.HidD_GetAttributes(handle, ctypes.byref(attrs)):
-        return None
+        raise HidError("HidD_GetAttributes failed for %s: Win32 error %d"
+                       % (path, ctypes.get_last_error()))
     preparsed = ctypes.c_void_p()
     if not _hid.HidD_GetPreparsedData(handle, ctypes.byref(preparsed)):
         return None
@@ -267,6 +268,9 @@ def enumerate_devices(vendor_id=None):
             continue
         try:
             info = _describe(handle, path)
+        except HidError:
+            # Interfaces whose attributes cannot be read are not listed.
+            info = None
         finally:
             _kernel32.CloseHandle(handle)
         if info and (vendor_id is None or info.vendor_id == vendor_id):
