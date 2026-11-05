@@ -36,6 +36,19 @@ def _ask_child():
     return proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else proc.stderr[-400:]
 
 
+def _release_handles():
+    """Close every handle dualled_pro recorded, whatever key it is stored under."""
+    import dualled_pro
+    from ctypes import wintypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    for name, handle in list(dualled_pro._win_handles.items()):
+        if handle:
+            kernel32.CloseHandle(handle)
+            dualled_pro._win_handles[name] = None
+
+
 @unittest.skipUnless(os.name == "nt", "the guard is a Windows named mutex")
 class TestSingleInstance(unittest.TestCase):
     def test_second_copy_is_refused_while_the_first_holds_the_mutex(self):
@@ -44,9 +57,7 @@ class TestSingleInstance(unittest.TestCase):
         try:
             self.assertEqual(_ask_child(), "SECOND_COPY_REFUSED")
         finally:
-            handle = dualled_pro._win_handles.pop("mutex", None)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
+            _release_handles()
 
     def test_a_copy_is_allowed_once_the_first_has_released_it(self):
         # The negative control: the same child, with nobody holding the mutex,
@@ -71,9 +82,7 @@ class TestSingleInstance(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(appdata, "DualLED_Pro", "stop.signal")),
                             "--stop wrote no stop signal while a copy held the mutex")
         finally:
-            handle = dualled_pro._win_handles.pop("mutex", None)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
+            _release_handles()
             shutil.rmtree(appdata, ignore_errors=True)
 
 

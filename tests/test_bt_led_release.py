@@ -58,7 +58,7 @@ class ReportingDevice(harness.FakeDevice):
 class BluetoothLedReleaseTests(unittest.TestCase):
     def test_bluetooth_releases_leds_once_before_the_first_colour(self):
         sink = harness.Sink(); manager = DeviceManager(sink)
-        device = ReportingDevice([usb_input_report(ds.BT_CONNECTION_COMPLETE_TIMESTAMP)])
+        device = ReportingDevice([bt_input_report(ds.BT_CONNECTION_COMPLETE_TIMESTAMP)])
         self.assertTrue(harness.connect(manager, device, "bt"))
         release, colours = device.writes[0], device.writes[1:]
         self.assertEqual(release[0], ds.OUTPUT_REPORT_BT)
@@ -74,8 +74,8 @@ class BluetoothLedReleaseTests(unittest.TestCase):
     def test_release_waits_for_the_connection_animation_to_finish(self):
         sink = harness.Sink(); manager = DeviceManager(sink)
         early = ds.BT_CONNECTION_COMPLETE_TIMESTAMP - 1
-        device = ReportingDevice([usb_input_report(1_000_000), usb_input_report(early),
-                                  usb_input_report(ds.BT_CONNECTION_COMPLETE_TIMESTAMP)])
+        device = ReportingDevice([bt_input_report(1_000_000), bt_input_report(early),
+                                  bt_input_report(ds.BT_CONNECTION_COMPLETE_TIMESTAMP)])
         self.assertTrue(harness.connect(manager, device, "bt"))
         self.assertEqual(device.reads_before_first_write, 3,
                          "released only once the timestamp reached the threshold")
