@@ -109,10 +109,14 @@ def save_cfg_throttled(cfg):
     else:
         _CFG_SAVE["dirty"] = True
 
-def flush_cfg():
-    if _CFG_SAVE["dirty"]:
-        _CFG_SAVE["dirty"] = False; _CFG_SAVE["last"] = time.time()
-        save_cfg(CFG)
+def flush_cfg(force=False):
+    """Write a pending change once the one-second window has passed; force writes it now (quit)."""
+    if not _CFG_SAVE["dirty"]:
+        return
+    if not force and time.time() - _CFG_SAVE["last"] < 1.0:
+        return
+    _CFG_SAVE["dirty"] = False; _CFG_SAVE["last"] = time.time()
+    save_cfg(CFG)
 
 CFG = load_cfg()
 
@@ -342,7 +346,8 @@ class Engine(threading.Thread):
     # Bluetooth saturates above ~30 output reports/s: measured on real
     # hardware, a 60 Hz Rainbow dropped the link at 18.9 s and 65 writes
     # failed, while 30 Hz and USB at 60 Hz were clean. Animation loops are
-    # decimated to these rates; forced writes (user intent, heartbeat) never.
+    # decimated to these rates, and so are picker drags. Forced writes (the
+    # Manual keep-alive, auto-sleep holds) are not.
     # Class attributes, not module globals: the engine is also exec'd in
     # isolation by the test harness, which extracts only the class bodies.
     BT_MIN_INTERVAL  = 1.0 / 30.0
@@ -362,6 +367,8 @@ class Engine(threading.Thread):
         self._ol = threading.Lock(); self.out = self.color
         self._last_apply = 0.0   # 0 = أول إرسال يتم فورًا
         self._last_write_at = 0.0  # per-transport rate gate; see BT_MIN_INTERVAL
+        self._last_user = time.time()  # last change made in the app; Auto Sleep counts from here
+        self._hold = None              # None, "off" or "solid": set by Auto Sleep or tray Off
 
     # ---- profiles helpers
     def snapshot(self):
@@ -400,15 +407,35 @@ class Engine(threading.Thread):
 
     def set_mode(self,m):
         # وضع غير معروف (config محرَّر يدويًا/تالف) → Manual، وإلا حلقة التشغيل تدور بلا نوم
+        self._wake()
         self.mode = m if m in MODE_CODE else "Manual"
         self._seq_i = None
         CFG["last_mode"]=self.mode; save_cfg(CFG)
-    def set_speed(self,v): self.speed=float(v); CFG["speed"]=self.speed; save_cfg_throttled(CFG)
-    def set_rb(self,v): self.rb=float(v); CFG["rainbow_brightness"]=self.rb; save_cfg_throttled(CFG)
-    def set_duty(self,v): self.duty=float(v); CFG["flash_duty"]=self.duty; save_cfg_throttled(CFG)
+    def set_speed(self,v): self._wake(); self.speed=float(v); CFG["speed"]=self.speed; save_cfg_throttled(CFG)
+    def set_rb(self,v): self._wake(); self.rb=float(v); CFG["rainbow_brightness"]=self.rb; save_cfg_throttled(CFG)
+    def set_duty(self,v): self._wake(); self.duty=float(v); CFG["flash_duty"]=self.duty; save_cfg_throttled(CFG)
+
+    def _wake(self):
+        """A change made in the app: it counts as activity and ends any hold."""
+        self._last_user = time.time()
+        self._hold = None
+
+    def _enter_hold(self, kind):
+        """Hold the lightbar: "off" writes black, "solid" freezes the current colour."""
+        self._hold = kind
+        self._send((0, 0, 0) if kind == "off" else self.color, force=True)
+
+    def hold_off(self):
+        """Tray Off: dark until the next change in the app. The saved colour is kept."""
+        self._enter_hold("off")
+
     def set_color(self,rgb):
+        self._wake()
         self.color=tuple(int(c) for c in rgb); CFG["color"]=rgb_to_hex(self.color); save_cfg_throttled(CFG)
-        if self.mode=="Manual": self._send(self.color, force=True)
+        # Not forced. A drag sends one of these per mouse move, and forced writes
+        # would push Bluetooth past its ~30/s limit. The Manual loop re-sends
+        # within 0.25 s while the applied colour differs, so the final colour lands.
+        if self.mode=="Manual": self._send(self.color)
 
 
 
@@ -417,6 +444,10 @@ class Engine(threading.Thread):
         t0=time.time(); i=0
         while not self.stop_evt.is_set():
             try:
+                if self._hold is not None:
+                    # Held by Auto Sleep or tray Off: send nothing until the user changes something.
+                    time.sleep(0.25)
+                    continue
                 m=self.mode; s=self.speed; rb=self.rb; c=self.color; duty=self.duty
 
                 if m=="Manual":
@@ -492,16 +523,12 @@ class Engine(threading.Thread):
                     # حزام أمان: وضع غير معروف لا يجوز أن يدوّر الحلقة بلا نوم
                     time.sleep(0.1)
 
-                # Auto Sleep
-                if CFG.get("auto_sleep",{}).get("enabled", False):
-                    idle = time.time() - self._last_apply
-                    mins = max(1, int(CFG["auto_sleep"].get("minutes",30)))
-                    if idle > mins*60:
-                        act = CFG["auto_sleep"].get("action","off")
-                        if act=="off": self._send((0,0,0))
-                        else: self._send(self.color)
-                        # بعدها ننتظر ثانية لئلا نستهلك CPU
-                        time.sleep(1.0)
+                # Auto Sleep: idle means no change made in the app for N minutes.
+                # The loop's own frames and heartbeats are not activity; measuring
+                # from the last write meant the lightbar could never sleep.
+                sleep_cfg = CFG.get("auto_sleep", {})
+                if sleep_cfg.get("enabled", False) and time.time() - self._last_user > max(1, int(sleep_cfg.get("minutes", 30))) * 60:
+                    self._enter_hold("off" if sleep_cfg.get("action", "off") == "off" else "solid")
 
                 i+=1
 
@@ -1844,7 +1871,8 @@ class App(tk.Tk):
             elif key == "off":
                 if self.engine:
                     self.engine.set_mode("Manual")
-                    self.engine.set_color((0, 0, 0))
+                    # Darken the bar without writing black over the saved colour.
+                    self.engine.hold_off()
                 self.mode_disp.set(code_to_display(self.lang, "Manual"))
             elif key == "quit":
                 self.quit_app()
@@ -2296,7 +2324,7 @@ class App(tk.Tk):
             if getattr(self, "tray", None): self.tray.destroy()
         except Exception:
             pass
-        try: flush_cfg()
+        try: flush_cfg(force=True)
         except Exception: pass
         log("App quit by user")
         self.destroy()
