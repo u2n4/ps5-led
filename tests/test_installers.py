@@ -14,10 +14,6 @@ HARNESS = r'''
 $ErrorActionPreference = "Stop"
 # Load the native utility functions before network mocks shadow module exports.
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
-Write-Output ("DIAG PSVersion=" + $PSVersionTable.PSVersion + " edition=" + $PSVersionTable.PSEdition)
-Write-Output ("DIAG PSModulePath=" + $env:PSModulePath)
-Write-Output ("DIAG utility=" + ((Get-Module -ListAvailable Microsoft.PowerShell.Utility | ForEach-Object Path) -join ' | '))
-Write-Output ("DIAG FileHash=" + ((Get-Command Get-FileHash -ErrorAction SilentlyContinue | ForEach-Object Source) -join ' | '))
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 foreach ($name in @("install.ps1", "install-source.ps1")) {
     $parseErrors = $null; $tokens = $null
@@ -159,11 +155,12 @@ class InstallerTests(unittest.TestCase):
                 archive.writestr(entry, "../escape.txt")
             script = root / "test.ps1"
             script.write_text(HARNESS, encoding="utf-8")
-            test_env = dict(os.environ, PS5LED_TEST_ROOT=str(root), PS5LED_TEST_REPO=str(REPO))
-            # Each PowerShell edition must discover its own bundled modules.
-            test_env.pop("PSModulePath", None)
+            # Each PowerShell edition must discover its own bundled modules. Windows environment names are
+            # case-insensitive but dict keys are not, so every spelling of PSModulePath is dropped here.
+            test_env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+            test_env.update(PS5LED_TEST_ROOT=str(root), PS5LED_TEST_REPO=str(REPO))
             if os.path.basename(runtime).lower() == "powershell.exe":
-                # Windows PowerShell 5.1 computes these three folders itself when PSModulePath is unset.
+                # Windows PowerShell 5.1's own three folders, so a PowerShell 7 Utility module is never loaded.
                 test_env["PSModulePath"] = os.pathsep.join([
                     os.path.join(os.environ.get("USERPROFILE", ""), "Documents", "WindowsPowerShell", "Modules"),
                     os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "WindowsPowerShell", "Modules"),
