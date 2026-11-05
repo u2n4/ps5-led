@@ -31,54 +31,40 @@ function Get-PS5LEDDownload {
 
 function New-PS5LEDShortcut {
     param([string]$Executable, [string]$WorkingDirectory)
-    # COM saves in an ASCII temporary path before moving to an Arabic desktop.
-    # CreateShortcut().Save() fails in any non-ASCII folder, and %TEMP% sits in the
-    # profile folder, so an Arabic profile name needs another ASCII folder.
-    $temporaryRoot = if ($env:TEMP -notmatch '[^\x00-\x7F]') { $env:TEMP } elseif ($env:PUBLIC -notmatch '[^\x00-\x7F]') { $env:PUBLIC } else { Join-Path $env:SystemRoot "Temp" }
-    # The root can be a shared folder (C:\Users\Public, Windows\Temp), so the .lnk never goes straight
-    # into it. A new random subfolder holds it. Its ACL is built first and applied by the call that
-    # creates the folder, so the folder never exists with the shared root's rules. It is owned by the
-    # current user and readable and writable only by that user, SYSTEM and Administrators.
-    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
-    $acl.SetOwner($user)
-    $acl.SetAccessRuleProtection($true, $false)   # no inheritance from the shared root
-    $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    foreach ($sid in @($user,
-                       (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'),
-                       (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'))) {
-        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inherit, 'None', 'Allow')))
+    # CreateShortcut().Save() fails in a non-ASCII folder, so the .lnk is saved in this user's own TEMP.
+    # If TEMP is not ASCII, its 8.3 short path is used. No shared folder is ever used: without an ASCII
+    # private folder the shortcut is skipped with a warning, and the install still succeeds.
+    $folder = $env:TEMP
+    if ($folder -match '[^\x00-\x7F]') {
+        if (-not ('PS5LED.ShortPath' -as [type])) {
+            Add-Type -Namespace PS5LED -Name ShortPath -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+public static extern uint GetShortPathName(string longPath, System.Text.StringBuilder shortPath, uint bufferLength);
+'@
+        }
+        $buffer = New-Object System.Text.StringBuilder 32767
+        $length = [PS5LED.ShortPath]::GetShortPathName($folder, $buffer, $buffer.Capacity)
+        $folder = if ($length -gt 0 -and $length -lt $buffer.Capacity) { $buffer.ToString(0, [int]$length) } else { "" }
     }
-    $staging = Join-Path $temporaryRoot ("ps5led-" + [guid]::NewGuid().ToString("N"))
-    # CreateDirectory does not fail on an existing folder, so check first: never adopt a folder we did not make.
-    if (Test-Path -LiteralPath $staging) { throw "Staging folder already exists: $staging" }
-    if ($PSVersionTable.PSEdition -eq 'Core') {
-        [System.IO.FileSystemAclExtensions]::CreateDirectory($acl, $staging) | Out-Null   # PowerShell 7
-    } else {
-        [System.IO.Directory]::CreateDirectory($staging, $acl) | Out-Null                # Windows PowerShell 5.1
+    if (-not $folder -or $folder -match '[^\x00-\x7F]' -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+        Write-Warning "No private ASCII folder for the shortcut (TEMP is missing, not ASCII, or has no usable 8.3 short path). The desktop shortcut was skipped; PS5 LED is still installed."
+        return
     }
-    $temporary = Join-Path $staging "PS5 LED.lnk"
+    $desktop = [Environment]::GetFolderPath("Desktop")
+    $temporary = Join-Path $folder ("ps5led-" + [guid]::NewGuid().ToString("N") + ".lnk")
+    $sibling = Join-Path $desktop ("PS5 LED-" + [guid]::NewGuid().ToString("N") + ".tmp")
     try {
-        $check = Get-Acl -LiteralPath $staging
-        if (-not $check.GetOwner([System.Security.Principal.SecurityIdentifier]).Equals($user)) { throw "Staging folder is not owned by the current user." }
-        if (@(Get-ChildItem -LiteralPath $staging -Force).Count -ne 0) { throw "Staging folder is not empty." }
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($temporary)
+        $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($temporary)
         $shortcut.TargetPath = $Executable
         $shortcut.WorkingDirectory = $WorkingDirectory
         $shortcut.IconLocation = "$Executable,0"
         $shortcut.Description = "PS5 LED - PS5/PS4 RGB lightbar control"
         $shortcut.Save()
-        $desktop = [Environment]::GetFolderPath("Desktop")
-        $destination = Join-Path $desktop "PS5 LED.lnk"
-        # Copy, not move: a moved file keeps the staging folder's rules, while a copy takes the desktop's.
-        if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
-        Copy-Item -LiteralPath $temporary -Destination $destination
+        # Copy to a sibling name, then move over the old shortcut. A failed copy leaves the old one as it was.
+        Copy-Item -LiteralPath $temporary -Destination $sibling
+        Move-Item -LiteralPath $sibling -Destination (Join-Path $desktop "PS5 LED.lnk") -Force
     } finally {
-        # Only the known .lnk, then the folder itself without -Recurse: anything else inside is left alone.
-        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
-        try { Remove-Item -LiteralPath $staging -ErrorAction Stop }
-        catch { Write-Warning "Could not remove the private folder $staging. Remove it by hand." }
+        Remove-Item -LiteralPath $temporary, $sibling -Force -ErrorAction SilentlyContinue
     }
 }
 

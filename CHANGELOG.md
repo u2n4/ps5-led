@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The installer reads a release checksum saved with a UTF-8 byte-order mark, and its errors name both hashes.
 
 ### Security
-- The installer builds the desktop shortcut in a private folder, not a shared one, so another local account cannot swap the file (CWE-377, CWE-367). The folder also works for Arabic profile paths.
+- The installer saves the desktop shortcut in your own TEMP folder (its 8.3 short path when TEMP has non-ASCII characters), then moves it over the old shortcut only once the new file is complete. It never uses a shared folder: with no ASCII private folder, it skips the shortcut and warns (CWE-377, CWE-367).
 
 [Unreleased]: https://github.com/u2n4/ps5-led/compare/v3.0.0...HEAD
 
