@@ -35,8 +35,22 @@ function New-PS5LEDShortcut {
     # CreateShortcut().Save() fails in any non-ASCII folder, and %TEMP% sits in the
     # profile folder, so an Arabic profile name needs another ASCII folder.
     $temporaryRoot = if ($env:TEMP -notmatch '[^\x00-\x7F]') { $env:TEMP } elseif ($env:PUBLIC -notmatch '[^\x00-\x7F]') { $env:PUBLIC } else { Join-Path $env:SystemRoot "Temp" }
-    $temporary = Join-Path $temporaryRoot ("ps5led-" + [guid]::NewGuid().ToString("N") + ".lnk")
+    # The root can be a shared folder (C:\Users\Public, Windows\Temp), so the .lnk never goes straight
+    # into it. A new random subfolder, locked to the current user, SYSTEM and Administrators before
+    # anything is written, holds the file, so another local account cannot swap it.
+    $staging = Join-Path $temporaryRoot ("ps5led-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $staging -ErrorAction Stop | Out-Null   # fails if the name is taken
     try {
+        $acl = New-Object System.Security.AccessControl.DirectorySecurity
+        $acl.SetAccessRuleProtection($true, $false)   # no inheritance from the shared root
+        $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+        foreach ($sid in @([System.Security.Principal.WindowsIdentity]::GetCurrent().User,
+                           (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'),
+                           (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'))) {
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', $inherit, 'None', 'Allow')))
+        }
+        Set-Acl -LiteralPath $staging -AclObject $acl
+        $temporary = Join-Path $staging "PS5 LED.lnk"
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($temporary)
         $shortcut.TargetPath = $Executable
@@ -45,9 +59,14 @@ function New-PS5LEDShortcut {
         $shortcut.Description = "PS5 LED - PS5/PS4 RGB lightbar control"
         $shortcut.Save()
         $desktop = [Environment]::GetFolderPath("Desktop")
-        Move-Item -LiteralPath $temporary -Destination (Join-Path $desktop "PS5 LED.lnk") -Force
+        $destination = Join-Path $desktop "PS5 LED.lnk"
+        Move-Item -LiteralPath $temporary -Destination $destination -Force
+        # The moved file keeps the staging rules. Give it back the desktop's inherited rules.
+        $shortcutAcl = Get-Acl -LiteralPath $destination
+        $shortcutAcl.SetAccessRuleProtection($false, $false)
+        Set-Acl -LiteralPath $destination -AclObject $shortcutAcl
     } finally {
-        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
 }
 
