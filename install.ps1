@@ -78,7 +78,9 @@ function Install-PS5LED {
         Get-PS5LEDDownload -Uri $exeAsset[0].browser_download_url -OutFile $download
         $manifest = Get-PS5LEDDownload -Uri $hashAsset[0].browser_download_url
         if ($manifest -is [byte[]]) { $manifest = [Text.Encoding]::UTF8.GetString($manifest) }
-        if ($manifest.Trim() -notmatch '^(?<hash>[a-fA-F0-9]{64})(?:\s+\*?PS5-LED\.exe)?$') {
+        # A UTF-8 byte-order mark (Windows PowerShell 5.1 writes one) is not whitespace, so Trim() keeps it.
+        $manifest = $manifest.TrimStart([char]0xFEFF).Trim()
+        if ($manifest -notmatch '^(?<hash>[a-fA-F0-9]{64})(?:\s+\*?PS5-LED\.exe)?$') {
             throw "The release checksum is missing or malformed."
         }
         $expected = $Matches['hash']
