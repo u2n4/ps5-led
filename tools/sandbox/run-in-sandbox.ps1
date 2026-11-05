@@ -26,9 +26,11 @@ Say "Windows Sandbox run"
 Say ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
 
 # Prove the sandbox really is bare, so a pass cannot be explained away.
-# The WindowsApps python.exe is an App Execution Alias stub, not an install.
+# A python.exe under WindowsApps is an App Execution Alias: a stub when no Python package is installed,
+# or a real install when a Store Python package is present. The alias counts only in that case.
+$store = Get-AppxPackage -Name 'PythonSoftwareFoundation.Python.*' -ErrorAction SilentlyContinue | Select-Object -First 1
 $py = Get-Command python -All -ErrorAction SilentlyContinue |
-      Where-Object { $_.Source -and $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
+      Where-Object { $_.Source -and ($_.Source -notlike '*\WindowsApps\*' -or $store) } | Select-Object -First 1
 Say ("python present : " + $(if ($py) { $py.Source } else { "no (as expected)" }))
 $pyi = Test-Path 'C:\Program Files\Python*'
 Say ("Python install dir present : " + $pyi)
