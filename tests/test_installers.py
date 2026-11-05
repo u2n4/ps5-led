@@ -14,6 +14,10 @@ HARNESS = r'''
 $ErrorActionPreference = "Stop"
 # Load the native utility functions before network mocks shadow module exports.
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
+Write-Output ("DIAG PSVersion=" + $PSVersionTable.PSVersion + " edition=" + $PSVersionTable.PSEdition)
+Write-Output ("DIAG PSModulePath=" + $env:PSModulePath)
+Write-Output ("DIAG utility=" + ((Get-Module -ListAvailable Microsoft.PowerShell.Utility | ForEach-Object Path) -join ' | '))
+Write-Output ("DIAG FileHash=" + ((Get-Command Get-FileHash -ErrorAction SilentlyContinue | ForEach-Object Source) -join ' | '))
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 foreach ($name in @("install.ps1", "install-source.ps1")) {
     $parseErrors = $null; $tokens = $null
@@ -158,6 +162,13 @@ class InstallerTests(unittest.TestCase):
             test_env = dict(os.environ, PS5LED_TEST_ROOT=str(root), PS5LED_TEST_REPO=str(REPO))
             # Each PowerShell edition must discover its own bundled modules.
             test_env.pop("PSModulePath", None)
+            if os.path.basename(runtime).lower() == "powershell.exe":
+                # Windows PowerShell 5.1 computes these three folders itself when PSModulePath is unset.
+                test_env["PSModulePath"] = os.pathsep.join([
+                    os.path.join(os.environ.get("USERPROFILE", ""), "Documents", "WindowsPowerShell", "Modules"),
+                    os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "WindowsPowerShell", "Modules"),
+                    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0", "Modules"),
+                ])
             result = subprocess.run(
                 [runtime, "-NoProfile", "-NonInteractive", "-File", str(script)],
                 capture_output=True, text=True, timeout=45,
