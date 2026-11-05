@@ -4,6 +4,7 @@ The Windows HID layer is replaced with a fake. The real device manager still run
 fake, so the colour bytes checked here are the ones the app would send to a controller.
 """
 import contextlib
+import copy
 import io
 import json
 import shutil
@@ -140,9 +141,12 @@ class HeadlessTests(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp(prefix="ps5led-cli-tests-"))
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.cfg = {"color": "#00aaff", "profiles": {"Fortnite": dict(PROFILE), "Default": dict(PROFILE, color="#00aaff")}}
+        self.snapshot = copy.deepcopy(self.cfg)  # what the settings file holds, as load_cfg() returns it
         self.save = Mock()
         self.mutex = Mock(return_value=True)  # no other PS5 LED is running
-        for name, value in (("CFG", self.cfg), ("save_cfg", self.save), ("_acquire_global_mutex", self.mutex)):
+        reload = Mock(side_effect=lambda: copy.deepcopy(self.snapshot))
+        for name, value in (("CFG", self.cfg), ("save_cfg", self.save), ("_claim_global_mutex", self.mutex),
+                            ("load_cfg", reload)):
             patcher = patch.object(dp, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
