@@ -71,6 +71,7 @@ if (Test-Path $log) {
 }
 
 # A picture of the window, so "it ran" is not taken on trust.
+$shotOk = $false
 try {
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
     Start-Sleep -Seconds 3
@@ -80,6 +81,7 @@ try {
     $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
     $bmp.Save((Join-Path $out 'sandbox-screen.png'))
     Say "screenshot saved"
+    $shotOk = $true
 } catch { Say ("screenshot failed: " + $_.Exception.Message) }
 
 $wasRunning = -not $proc.HasExited
@@ -96,5 +98,6 @@ if (-not $wasRunning) {
 } else {
     Say "VERDICT: did not start, or never reported a preview backend"
 }
+if (-not $shotOk) { $passed = $false; Say "VERDICT: not passed - the screenshot was not saved" }
 Say "done - close the sandbox; results are in the mapped folder"
 if (-not $passed) { exit 1 }

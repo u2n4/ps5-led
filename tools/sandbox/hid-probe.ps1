@@ -29,6 +29,7 @@ Say ("context : " + $(if ($inSandbox) { "inside Windows Sandbox" } else { "host"
 # A CIM query that fails is reported as FAILED, never as zero devices.
 # Every HID-class device Windows knows about.
 $hidOk = $true
+$queryFailed = $false
 try {
     $hid = @(Get-CimInstance Win32_PnPEntity -ErrorAction Stop |
              Where-Object { $_.PNPClass -eq 'HIDClass' -or $_.DeviceID -like 'HID\*' })
@@ -64,6 +65,7 @@ try {
     Say ("USB devices bound to a controller : " + $usb.Count)
     foreach ($id in $usb | Select-Object -First 25) { Say ("   " + $id) }
 } catch {
+    $queryFailed = $true
     Say ("FAIL: USB device query failed : " + $_.Exception.Message)
 }
 
@@ -73,6 +75,7 @@ try {
             Where-Object { $_.PNPClass -eq 'Bluetooth' })
     Say ("Bluetooth devices : " + $bt.Count)
 } catch {
+    $queryFailed = $true
     Say ("FAIL: Bluetooth device query failed : " + $_.Exception.Message)
 }
 
@@ -86,3 +89,5 @@ if (-not $hidOk) {
 } else {
     Say "VERDICT: HID exists but no Sony controller - the physical pad is not passed through"
 }
+# An undecided verdict or any failed query is a failed probe, not a clean result.
+if (-not $hidOk -or $queryFailed) { exit 1 }
