@@ -198,5 +198,12 @@ class NativeBackendTests(unittest.TestCase):
         self.assertIsNone(sink.values["sensor_timestamp"])
         self.assertEqual(sink.values["right_stick"], (0.0, 0.0))
 
+    def test_a_successful_connect_clears_the_error_left_by_the_last_one(self):
+        # DeviceManager's constructor promises _last_error is cleared on a successful connect.
+        sink = Sink(); manager = DeviceManager(sink)
+        manager._last_error = "no input report for 3.0s - treating the device as gone"
+        self.assertTrue(connect(manager, FakeDevice()))
+        self.assertIsNone(manager.describe()["last_error"])
+
 
 if __name__ == "__main__": unittest.main()

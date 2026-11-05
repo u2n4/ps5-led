@@ -477,6 +477,7 @@ class DeviceManager(object):
                 # the only place that reason survives -- the connection
                 # succeeded, so nothing later will fail and record it.
                 self._connect_error = calibration_error
+                self._last_error = None
                 # Published in the same critical section as the handle, not
                 # after it: _close() drops the handle under this lock and only
                 # then announces connected=False, so an update left outside
