@@ -35,9 +35,16 @@ def render():
     deadline = time.time() + 15
     while time.time() < deadline and view.gl.frame_count < target:
         view.gl.request_draw(); root.update(); time.sleep(0.03)
+    if view.gl.frame_count < target:
+        # No new frames: the GL loop stalled, so anything read now is stale.
+        print("render stalled: frame_count", view.gl.frame_count, "target", target,
+              "- no new frames in 15s")
+        root.destroy()
+        sys.exit(1)
     view.gl.tkMakeCurrent()
     w, h = view.gl.winfo_width(), view.gl.winfo_height()
     GL.glReadBuffer(GL.GL_FRONT)
+    GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)  # tight RGB rows: the default 4-byte padding breaks widths not divisible by 4
     raw = GL.glReadPixels(0, 0, w, h, GL.GL_RGB, GL.GL_UNSIGNED_BYTE)
     return [tuple(raw[i:i + 3]) for i in range(0, len(raw), 3)]
 

@@ -60,6 +60,7 @@ def pixels():
     gl.tkMakeCurrent()
     w, h = gl.winfo_width(), gl.winfo_height()
     GL.glReadBuffer(GL.GL_FRONT)
+    GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)  # tight RGB rows, whatever the width
     return w, h, bytes(GL.glReadPixels(0, 0, w, h, GL.GL_RGB, GL.GL_UNSIGNED_BYTE))
 
 
