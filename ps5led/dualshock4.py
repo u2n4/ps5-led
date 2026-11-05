@@ -36,6 +36,8 @@ def build_output(transport, rgb, blink=(0, 0)):
         raise ValueError("unknown transport: %r" % (transport,))
     if len(rgb) != 3 or any(not isinstance(c, int) or not 0 <= c <= 255 for c in rgb):
         raise ValueError("rgb out of range: %r" % (rgb,))
+    if len(blink) != 2 or any(not isinstance(c, int) or not 0 <= c <= 255 for c in blink):
+        raise ValueError("blink out of range: %r" % (blink,))
 
     offset = _COMMON_OFFSET[transport]
     report = bytearray(_SIZE[transport])
