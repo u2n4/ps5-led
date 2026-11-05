@@ -53,9 +53,9 @@ while ((Get-Date) -lt $deadline) {
         $previews = [regex]::Matches($text, 'preview: (OpenGL|built-in drawing)')
         if ($previews.Count -gt 0) {
             $backend = $previews[$previews.Count - 1].Groups[1].Value
-            # A widget can log OpenGL before its context initializes. Allow
-            # startup failures to reach the log before accepting that backend.
-            if ((Get-Date) -gt $deadline.AddSeconds(-45)) { break }
+            # A widget can log OpenGL before its context initializes, and a failed
+            # context falls back to the built-in drawing later. Keep polling to the
+            # deadline so the last backend logged is the one reported.
         }
     }
 }
