@@ -25,9 +25,11 @@ function Say($text) {
 
 Say "Real installer run, clean Windows"
 Say ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
-# The WindowsApps python.exe is an App Execution Alias stub, not an install.
+# A python.exe under WindowsApps is an App Execution Alias: a stub when no Python package is installed,
+# or a real install when a Store Python package is present. The alias counts only in that case.
+$store = Get-AppxPackage -Name 'PythonSoftwareFoundation.Python.*' -ErrorAction SilentlyContinue | Select-Object -First 1
 $py = Get-Command python -All -ErrorAction SilentlyContinue |
-      Where-Object { $_.Source -and $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
+      Where-Object { $_.Source -and ($_.Source -notlike '*\WindowsApps\*' -or $store) } | Select-Object -First 1
 Say ("python before : " + $(if ($py) { $py.Source } else { "not installed" }))
 
 # LogonCommand fires the moment the desktop appears, which is before the
@@ -84,8 +86,9 @@ if (Test-Path $installDir) {
 }
 
 # Did it install Python or any pip package behind our back?
+$store = Get-AppxPackage -Name 'PythonSoftwareFoundation.Python.*' -ErrorAction SilentlyContinue | Select-Object -First 1
 $pyAfter = Get-Command python -All -ErrorAction SilentlyContinue |
-           Where-Object { $_.Source -and $_.Source -notlike '*\WindowsApps\*' } | Select-Object -First 1
+           Where-Object { $_.Source -and ($_.Source -notlike '*\WindowsApps\*' -or $store) } | Select-Object -First 1
 Say ("python after  : " + $(if ($pyAfter) { $pyAfter.Source } else { "still not installed" }))
 $sitePkgs = @()
 foreach ($root in @("$env:LOCALAPPDATA\Programs\Python", "$env:APPDATA\Python", "C:\Program Files\Python*")) {
