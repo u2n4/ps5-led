@@ -23,7 +23,7 @@ function Say($t) {
 
 Say ("machine : " + $env:COMPUTERNAME)
 Say ("OS      : " + (Get-CimInstance Win32_OperatingSystem).Caption)
-$inSandbox = $env:COMPUTERNAME -like '*' -and (Test-Path 'C:\host')
+$inSandbox = (Get-CimInstance Win32_ComputerSystem).UserName -like '*WDAGUtilityAccount*'
 Say ("context : " + $(if ($inSandbox) { "inside Windows Sandbox" } else { "host" }))
 
 # Every HID-class device Windows knows about.
@@ -35,7 +35,9 @@ foreach ($d in $hid | Select-Object -First 25) {
 }
 
 # Sony's vendor id is 054C; the DualSense is PID 0CE6.
-$sony = @($hid | Where-Object { $_.DeviceID -match 'VID[_&]0*054C' -or $_.DeviceID -match '054c' })
+# Bluetooth IDs carry the vendor id as VID&0002054C, so allow up to six hex digits before it.
+# No loose "054c" match: instance ids contain random hex that can spell it.
+$sony = @($hid | Where-Object { $_.DeviceID -match 'VID[_&][0-9A-F]{0,6}054C' })
 Say ("Sony (VID 054C) devices : " + $sony.Count)
 foreach ($d in $sony) { Say ("   SONY: " + $d.DeviceID) }
 
