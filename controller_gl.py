@@ -6,6 +6,7 @@ blending, tone mapping or sRGB conversion. The shell uses smooth lighting.
 
 import base64
 import ctypes
+import functools
 import gzip
 import json
 import math
@@ -242,6 +243,34 @@ def load_mesh(path):
     return model
 
 
+@functools.lru_cache(maxsize=None)
+def _win32_gl():
+    """Win32 GDI and WGL calls bound with use_last_error=True.
+
+    PyOpenGL's WGL prototypes do not keep the error code, so a failed call could
+    only say "could not". The argument and return types are set here because the
+    device and context handles are 64-bit pointers. Returns (gdi32, opengl32).
+    """
+    from ctypes import wintypes
+    from OpenGL import WGL
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    opengl32 = ctypes.WinDLL("opengl32", use_last_error=True)
+    pfd_ptr = ctypes.POINTER(WGL.PIXELFORMATDESCRIPTOR)
+    gdi32.ChoosePixelFormat.argtypes = [wintypes.HDC, pfd_ptr]
+    gdi32.ChoosePixelFormat.restype = ctypes.c_int
+    gdi32.SetPixelFormat.argtypes = [wintypes.HDC, ctypes.c_int, pfd_ptr]
+    gdi32.SetPixelFormat.restype = wintypes.BOOL
+    gdi32.SwapBuffers.argtypes = [wintypes.HDC]
+    gdi32.SwapBuffers.restype = wintypes.BOOL
+    opengl32.wglCreateContext.argtypes = [wintypes.HDC]
+    opengl32.wglCreateContext.restype = ctypes.c_void_p
+    opengl32.wglMakeCurrent.argtypes = [wintypes.HDC, ctypes.c_void_p]
+    opengl32.wglMakeCurrent.restype = wintypes.BOOL
+    opengl32.wglDeleteContext.argtypes = [ctypes.c_void_p]
+    opengl32.wglDeleteContext.restype = wintypes.BOOL
+    return gdi32, opengl32
+
+
 class ControllerGL(OpenGLFrame):
     def __init__(self, master, palette, led, on_failure, **kwargs):
         self.model = load_mesh(Path(__file__).resolve().parent / "assets" / "dualsense.mesh.json.gz")
@@ -288,23 +317,26 @@ class ControllerGL(OpenGLFrame):
         pfd.iPixelType = 0
         pfd.cColorBits = 24
         pfd.cDepthBits = 24
-        fmt = WGL.ChoosePixelFormat(self._dc, pfd)
-        if not fmt or not WGL.SetPixelFormat(self._dc, fmt, pfd):
-            raise RuntimeError("Windows could not create an OpenGL pixel format")
-        self._context = WGL.wglCreateContext(self._dc)
-        if not self._context or not WGL.wglMakeCurrent(self._dc, self._context):
-            raise RuntimeError("Windows could not activate the OpenGL context")
+        gdi32, opengl32 = _win32_gl()
+        fmt = gdi32.ChoosePixelFormat(self._dc, ctypes.byref(pfd))
+        if not fmt:
+            raise RuntimeError("Windows could not create an OpenGL pixel format (ChoosePixelFormat): Win32 error %d" % ctypes.get_last_error())
+        if not gdi32.SetPixelFormat(self._dc, fmt, ctypes.byref(pfd)):
+            raise RuntimeError("Windows could not create an OpenGL pixel format (SetPixelFormat): Win32 error %d" % ctypes.get_last_error())
+        self._context = opengl32.wglCreateContext(self._dc)
+        if not self._context:
+            raise RuntimeError("Windows could not create an OpenGL context: Win32 error %d" % ctypes.get_last_error())
+        if not opengl32.wglMakeCurrent(self._dc, self._context):
+            raise RuntimeError("Windows could not activate the OpenGL context: Win32 error %d" % ctypes.get_last_error())
 
     def tkMakeCurrent(self):
-        from OpenGL import WGL
         if self._context:
-            if not WGL.wglMakeCurrent(self._dc, self._context):
-                raise RuntimeError("OpenGL context activation failed")
+            if not _win32_gl()[1].wglMakeCurrent(self._dc, self._context):
+                raise RuntimeError("OpenGL context activation failed: Win32 error %d" % ctypes.get_last_error())
 
     def tkSwapBuffers(self):
-        from OpenGL import WGL
-        if not WGL.SwapBuffers(self._dc):
-            raise RuntimeError("OpenGL buffer swap failed")
+        if not _win32_gl()[0].SwapBuffers(self._dc):
+            raise RuntimeError("OpenGL buffer swap failed: Win32 error %d" % ctypes.get_last_error())
 
     def tkMap(self, event):
         if self._closed or self._failed:
@@ -607,12 +639,12 @@ class ControllerGL(OpenGLFrame):
             self._pending = None
         self._release(None)
         if self._context:
-            from OpenGL import WGL
             self.tkMakeCurrent()
             if self.textures:
                 GL.glDeleteTextures(self.textures)
-            WGL.wglMakeCurrent(None, None)
-            WGL.wglDeleteContext(self._context)
+            opengl32 = _win32_gl()[1]
+            opengl32.wglMakeCurrent(None, None)
+            opengl32.wglDeleteContext(self._context)
             self._context = None
         if self._dc:
             self._user32.ReleaseDC(self.winfo_id(), self._dc)
