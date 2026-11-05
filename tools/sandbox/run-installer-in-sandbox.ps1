@@ -90,9 +90,8 @@ foreach ($root in @("$env:LOCALAPPDATA\Programs\Python", "$env:APPDATA\Python", 
 }
 Say ("python folders created : " + $(if ($sitePkgs) { $sitePkgs -join ', ' } else { "none" }))
 
-# Is it actually running, and did the 3D come up?
-$proc = Get-Process 'PS5-LED' -ErrorAction SilentlyContinue
-Say ("app running : " + [bool]$proc)
+# Did the 3D come up? The process is read after the wait below: a first scan of
+# the unsigned EXE can delay its start past the first few seconds.
 $log = Join-Path $env:APPDATA 'DualLED_Pro\app.log'
 $backend = $null
 $deadline = (Get-Date).AddSeconds(40)
@@ -103,6 +102,8 @@ while ((Get-Date) -lt $deadline -and -not $backend) {
     }
     if (-not $backend) { Start-Sleep -Milliseconds 700 }
 }
+$proc = Get-Process 'PS5-LED' -ErrorAction SilentlyContinue
+Say ("app running : " + [bool]$proc)
 Say ("preview backend : " + $(if ($backend) { $backend } else { "never logged" }))
 if (Test-Path $log) { Copy-Item $log (Join-Path $out 'app.log') -Force }
 
