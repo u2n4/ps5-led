@@ -46,7 +46,7 @@ The default installation folder is `%LOCALAPPDATA%\DualLED-Pro`. Advanced script
 - 🕹️ **Live controller view** — an accurate DualSense rendering whose light bar mirrors the real one **100% in sync**, in 5 official shell colors.
 - 🔍 **Auto-detects your controller** — PS5 DualSense and PS4 DualShock 4 are both driven automatically.
 - 🔋 **Battery monitor & alerts** — low-battery, plugged-in, and full-charge notifications.
-- 💾 **Profiles** — save and switch named color/effect presets instantly.
+- 💾 **Profiles** — save and switch named color/effect presets instantly. Export them to a JSON file and import them back; a bad file is refused with the reason.
 - 🌍 **Bilingual UI** — English & Arabic (العربية), switchable at runtime.
 - 🪟 **Fullscreen + tray** — runs fullscreen, minimizes to tray instead of quitting.
 - 🌌 **Animated starfield background** (toggleable).
@@ -87,7 +87,7 @@ To choose a branch, tag or commit and output directory:
 
 ### Run or build the downloaded source
 
-Only source development needs **Windows, Python 3.8+ and Tkinter**. From the downloaded project directory:
+Only source development needs **Windows, Python 3.10+ and Tkinter**. From the downloaded project directory:
 
 ```powershell
 python -m venv .venv
@@ -97,7 +97,14 @@ python -m venv .venv
 
 The two packages enable the full embedded 3D viewer. Without them the source app uses its Canvas fallback; native controller access still needs no third-party HID package. `requirements.txt` intentionally contains no mandatory packages.
 
-Building a standalone EXE is a separate developer step, using Python 3.13 for the currently verified build:
+Run the tests (they need no controller):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest
+.\.venv\Scripts\python.exe -m pytest tests
+```
+
+Building a standalone EXE is a separate developer step. The EXE recipe has only been run with Python 3.13:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install PyInstaller==6.21.0
@@ -105,6 +112,8 @@ Building a standalone EXE is a separate developer step, using Python 3.13 for th
 ```
 
 The result is `dist\PS5-LED.exe`. End users run that file without installing the development tools above.
+
+A successful build alone does not show that the lightbar or the 3D view works. Start the built EXE and check both before you publish it.
 
 ### Windows driver note
 
@@ -135,6 +144,18 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 | `--background` | Run without the UI, using the last saved color/mode. |
 | `--stop-after N` | Automatically stop after `N` minutes (background mode). |
 | `--off-on-exit` | Turn the lightbar off when exiting. |
+| `--keep-on-exit` | Keep the lightbar colour when the background process exits. |
+| `--stop` | Tell a running `--background` instance to stop, then exit. |
+| `--color RRGGBB` | Set the lightbar to this colour, then exit. No window. |
+| `--profile NAME` | Set the lightbar to a saved profile's colour, then exit. Animated modes run only in the app. |
+| `--export-profiles FILE` | Write the saved profiles to a JSON file, then exit. |
+| `--import-profiles FILE` | Merge the profiles in a JSON file into the saved settings, then exit. Close the app first. |
+
+Exit codes: `0` done, `1` failed (for example, no controller accepted the colour within 20 seconds, or the file has a problem), `2` a wrong option. The colour and import options refuse to run while the app is open.
+
+Profile files are JSON: `{"format": "ps5led-profiles", "version": 1, "profiles": {"Name": {"mode": "Manual", "speed": 1.0, "rainbow_brightness": 0.9, "flash_duty": 0.5, "color": "#3b82f6"}}}`. A file that does not match this is refused with the reason, and nothing changes.
+
+> **Not yet tested on a real controller:** profile export and import, and the `--color`, `--profile`, `--export-profiles` and `--import-profiles` options. The tests use a fake HID layer and temporary files; none of them has run against a real controller.
 
 Config and logs live in your OS app-data folder (`%APPDATA%\DualLED_Pro` on Windows).
 
@@ -188,7 +209,7 @@ The embedded viewer uses PyOpenGL and pyopengltk; device access uses Windows HID
 - 🕹️ **عرض حي لليد** — رسم DualSense دقيق تتزامن إضاءته مع اليد الحقيقية 100%، بخمسة ألوان رسمية.
 - 🔍 **كشف تلقائي لليد** — تحكم PS5 DualSense و PS4 DualShock 4 يعمل تلقائياً.
 - 🔋 **مراقبة بطارية وتنبيهات** — تنبيه عند انخفاض الشحن، التوصيل، والاكتمال.
-- 💾 **ملفات تعريف** — احفظ وبدّل بين إعدادات لون/تأثير محفوظة فوراً.
+- 💾 **ملفات تعريف** — احفظ وبدّل بين إعدادات لون/تأثير محفوظة فوراً. تقدر تصدّرها لملف JSON وترجعها بعدين؛ الملف الغلط يُرفض ويوضّح السبب.
 - 🌍 **واجهة ثنائية اللغة** — عربي وإنجليزي، تتبدّل أثناء التشغيل.
 - 🪟 **ملء الشاشة + تصغير للشريط** بدلاً من الإغلاق.
 - 🌌 **خلفية نجوم متحركة** (قابلة للإيقاف).
@@ -241,7 +262,7 @@ irm https://raw.githubusercontent.com/u2n4/ps5-led/main/install-source.ps1 | iex
 
 ### تشغيل المصدر أو بناء EXE
 
-تطوير المصدر يحتاج **Windows وPython 3.8+ وTkinter**. من مجلد المشروع الذي نزلته:
+تطوير المصدر يحتاج **Windows وPython 3.10+ وTkinter**. من مجلد المشروع الذي نزلته:
 
 ```powershell
 python -m venv .venv
@@ -251,7 +272,14 @@ python -m venv .venv
 
 المكتبتان تشغّلان العرض ثلاثي الأبعاد الكامل. بدونهما تستخدم نسخة المصدر الرسم البديل Canvas، والاتصال باليد يظل بدون مكتبة HID إضافية. ملف `requirements.txt` متعمد ما فيه مكتبات إلزامية.
 
-لبناء EXE مستقل، استخدم Python 3.13 المطابق للبناء المتحقق منه:
+شغّل الاختبارات (ما تحتاج يد):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest
+.\.venv\Scripts\python.exe -m pytest tests
+```
+
+لبناء EXE مستقل، وصفة البناء (PS5-LED.spec) جُرّبت مع Python 3.13 فقط:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install PyInstaller==6.21.0
@@ -259,6 +287,8 @@ python -m venv .venv
 ```
 
 الناتج `dist\PS5-LED.exe`؛ مستخدم البرنامج ما يحتاج أدوات التطوير هذه.
+
+نجاح البناء وحده ما يثبت أن الإضاءة والعرض ثلاثي الأبعاد يشتغلون. شغّل الملف الناتج وافحص الاثنين قبل النشر.
 
 > **تعريف اليد:** خلّ اليد على Windows HID الأصلي. USB وBluetooth ما يحتاجان تبديل التعريف.
 
@@ -287,6 +317,18 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 | `--background` | يشتغل بدون واجهة، باستخدام آخر لون/وضع محفوظ. |
 | `--stop-after N` | يوقف تلقائياً بعد `N` دقيقة (وضع الخلفية). |
 | `--off-on-exit` | يطفّي الإضاءة عند الخروج. |
+| `--keep-on-exit` | يحتفظ بلون الإضاءة إذا خرجت النسخة الخلفية. |
+| `--stop` | يطلب من نسخة `--background` تشتغل أنها توقف، ثم يخرج. |
+| `--color RRGGBB` | يضبط الإضاءة على هذا اللون ويخرج، بدون واجهة. |
+| `--profile NAME` | يضبط الإضاءة على لون ملف تعريف محفوظ ويخرج. الأوضاع المتحركة تشتغل في التطبيق فقط. |
+| `--export-profiles FILE` | يكتب ملفات التعريف المحفوظة في ملف JSON ويخرج. |
+| `--import-profiles FILE` | يدمج ملفات التعريف من ملف JSON في الإعدادات المحفوظة ويخرج. لازم يكون التطبيق مسكّر. |
+
+رموز الخروج: `0` تم، `1` فشل (مثلاً ما قبلت أي يد اللون خلال 20 ثانية، أو الملف فيه مشكلة)، `2` خيار غلط. خيارات اللون والاستيراد ما تشتغل والتطبيق مفتوح.
+
+ملفات التعريف بصيغة JSON: `{"format": "ps5led-profiles", "version": 1, "profiles": {"Name": {"mode": "Manual", "speed": 1.0, "rainbow_brightness": 0.9, "flash_duty": 0.5, "color": "#3b82f6"}}}`. الملف اللي ما يطابق الصيغة يُرفض مع السبب، ولا يتغيّر شي.
+
+> **ما جُرّب على يد حقيقية بعد:** تصدير واستيراد ملفات التعريف، وخيارات `--color` و`--profile` و`--export-profiles` و`--import-profiles`. الاختبارات تستخدم طبقة HID وهمية وملفات مؤقتة، ولا واحد منها اشتغل على يد حقيقية.
 
 الإعدادات والسجلات تنحفظ في مجلد بيانات النظام (`%APPDATA%\DualLED_Pro` على ويندوز).
 
@@ -325,18 +367,3 @@ python dualled_pro.py --background --stop-after 30 --off-on-exit
 </div>
 
 
-### Embedded 3D branch and packaging
-
-This branch extends the original Tkinter window. Drag the model with the mouse or use the right analog stick to orbit it. Gyro mirroring is optional and starts off. The existing five shell palettes and lighting modes remain in the settings panel.
-
-The quick installer installs a published release EXE only. The separate source downloader accepts `-Ref` for the branch, tag or commit you want to inspect. Publishing source changes does not replace release binaries: rebuild, verify and publish `PS5-LED.exe` with `PS5-LED.exe.sha256` together before expecting the quick installer to deliver a new build.
-
-`PS5-LED.spec` packages the Tk app, native HID modules, embedded viewer, preprocessed mesh, SVG fallback, icon and attribution into one Windows executable. PyInstaller is a **build-only** dependency; it is not required to run the Python app. A successful build alone does not verify rendering or controller operation: launch the built executable and check both before publishing it.
-
-### فرع العرض ثلاثي الأبعاد والتغليف
-
-هذا الفرع يطوّر نافذة Tkinter الأصلية. اسحب المجسم بالماوس أو استخدم العصا اليمنى لتدويره. تتبّع الجايرو اختياري ومطفأ عند البداية. ألوان الهيكل الخمسة وأوضاع الإضاءة تبقى ضمن الإعدادات الحالية.
-
-المثبّت السريع يحمّل EXE من إصدار منشور فقط. أمر المصدر المنفصل يقبل `-Ref` لاختيار الفرع أو tag أو commit. نشر المصدر ما يحدّث ملفات الإصدار تلقائيًا؛ لازم بناء وفحص ونشر `PS5-LED.exe` مع `PS5-LED.exe.sha256` سويًا.
-
-ملف `PS5-LED.spec` يضم التطبيق والعارض والملفات المساعدة والمجسم البديل ونَسب النموذج في ملف Windows تنفيذي. PyInstaller مطلوب للبناء فقط. نجاح البناء لا يثبت عمل الرسم أو اليد؛ يلزم تشغيل الملف التنفيذي وفحصهما قبل النشر.

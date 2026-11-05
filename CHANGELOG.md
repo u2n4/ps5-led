@@ -4,14 +4,59 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Profile export and import: profiles save to a JSON file and load back. A file is checked before anything changes, and a bad file is refused with the reason.
+- Headless command line: `--color RRGGBB` and `--profile NAME` set the lightbar and exit; `--export-profiles FILE` and `--import-profiles FILE` work without a controller. Exit code 1 means the step failed. Not yet tested on a real controller.
+- CI runs every test file on Windows, on Python 3.10 and 3.12. Dependabot checks pip and GitHub Actions weekly.
+
+### Changed
+- The Python floor is 3.10; 3.8 is end of life.
+- The app version constant is 3.1.0 for the next release.
+- The EXE is built as one file (10.6 MB), and its build recipe is in the repository.
+- The log records which controller was found.
+
+### Fixed
+- Auto Sleep works: idle time counts app activity, not lightbar writes. Tray Off keeps the saved colour.
+- Bluetooth: animation writes and colour-picker drags stay under the rate the link tolerates, and the lightbar is released from the wireless firmware before it is painted.
+- Config writes stay at most one per second during drags; the final value is written on quit.
+- `--stop` reaches a running background copy.
+- A non-numeric Auto Sleep minutes value keeps the saved setting.
+- A successful connection clears the error left by the previous failed attempt.
+- The installer downloads the portable EXE and the source separately, and never installs Python behind the user's back.
+- The installer reads a release checksum saved with a UTF-8 byte-order mark, and its errors name both hashes.
+
+### Security
+- The installer builds the desktop shortcut in a private folder, not a shared one, so another local account cannot swap the file (CWE-377, CWE-367). The folder also works for Arabic profile paths.
+
+[Unreleased]: https://github.com/u2n4/ps5-led/compare/v3.0.0...HEAD
+
+## [3.0.0] - 2026-09-08
+
+### Added
+- 3D controller preview: the OpenGL model is wired into the app, with a fallback drawing that always works.
+- The model's sticks, triggers, buttons and D-pad follow the real controller. Bumpers and triggers are separate, and the touchpad is included.
+- View toggles and a status line in the preview.
+- Portable build, and an installer that checks the EXE's SHA256 before it replaces anything.
+
+### Fixed
+- The 3D parts did not move; a swallowed error was the cause.
+- Complete Win32 ctypes prototypes for 64-bit handle safety, and the SVG parser handles truncated input.
+
+### Testing
+- The portable build was run on a clean Windows in a sandbox.
+
+[3.0.0]: https://github.com/u2n4/ps5-led/releases/tag/v3.0.0
+
 ## [2.3.0] - 2026-07-02
 
 ### Changed
 - **True zero-cost while gaming**: rendering now also pauses when the app loses input focus
   (fullscreen game over the window), not just when minimized — starfield, controller preview,
-  and battery drawing all sleep; the engine keeps driving the real lightbar.
+  and battery reading all sleep; the engine keeps driving the real lightbar.
 - Engine hardening: unknown mode from a hand-edited config can no longer busy-spin a CPU core;
-  Manual keep-alive relaxed to 0.25s; Sequence skips duplicate HID sends.
+  Manual keep-alive shortened to 0.25s; Sequence skips duplicate HID sends.
 - Config writes throttled to ≤1/sec during picker/slider drags (was ~100 writes/sec).
 - Language switch polish: modern dark style for the language selector, shell-color list and
   status line now switch language correctly, profile load syncs the mode display.
