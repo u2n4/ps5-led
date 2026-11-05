@@ -8,9 +8,11 @@
 
     Networking is off. The EXE must work with nothing to download.
   -->
+  <!-- Set HostFolder below to the full path of tools\sandbox\stage in your clone.
+       The C:\path\to\ps5-led value is a placeholder, not a real path. -->
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>C:\Users\aliha\codAi\projects\dualled-pro\tools\sandbox\stage</HostFolder>
+      <HostFolder>C:\path\to\ps5-led\tools\sandbox\stage</HostFolder>
       <SandboxFolder>C:\host</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
