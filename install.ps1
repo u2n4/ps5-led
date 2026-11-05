@@ -85,7 +85,7 @@ function Install-PS5LED {
         }
         $expected = $Matches['hash']
         $actual = (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash
-        if ($actual -ne $expected) { throw "SHA256 verification failed; the existing installation was not changed." }
+        if ($actual -ne $expected) { throw "SHA256 verification failed: the download is $actual but the release manifest says $expected. The existing installation was not changed." }
         $stream = [IO.File]::OpenRead($download)
         try {
             if ($stream.Length -lt 2 -or $stream.ReadByte() -ne 0x4d -or $stream.ReadByte() -ne 0x5a) {
