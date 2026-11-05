@@ -8,7 +8,11 @@ function Get-PS5LEDSource {
     param([string]$Ref = "main", [string]$Destination)
     if ([string]::IsNullOrWhiteSpace($Ref)) { throw "Specify a branch, tag or commit in -Ref." }
     # Pin the selected ref to one commit before downloading its entire tree.
-    $commit = Invoke-RestMethod -Uri ("https://api.github.com/repos/u2n4/ps5-led/commits/" + [uri]::EscapeDataString($Ref)) -Headers @{ "User-Agent" = "PS5-LED-Source" }
+    try {
+        $commit = Invoke-RestMethod -Uri ("https://api.github.com/repos/u2n4/ps5-led/commits/" + [uri]::EscapeDataString($Ref)) -Headers @{ "User-Agent" = "PS5-LED-Source" }
+    } catch {
+        throw "GitHub could not resolve -Ref '$Ref' to a commit. Check the branch, tag or commit name. $($_.Exception.Message)"
+    }
     if ($commit.sha -notmatch '^[a-fA-F0-9]{40}$') { throw "GitHub did not return a valid commit for $Ref." }
     if (-not $Destination) {
         $downloads = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
