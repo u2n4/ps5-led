@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-11-05
 
 ### Added
 - Profile export and import: profiles save to a JSON file and load back. A file is checked before anything changes, and a bad file is refused with the reason.
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - The installer saves the desktop shortcut in your own TEMP folder inside your profile (its 8.3 short path when that path has non-ASCII characters), then replaces the old shortcut only once the new file is complete. It never uses a shared folder: without a private ASCII folder, it skips the shortcut and warns (CWE-377, CWE-367).
 
-[Unreleased]: https://github.com/u2n4/ps5-led/compare/v3.0.0...HEAD
+[3.1.0]: https://github.com/u2n4/ps5-led/compare/v3.0.0...v3.1.0
 
 ## [3.0.0] - 2026-09-08
 
