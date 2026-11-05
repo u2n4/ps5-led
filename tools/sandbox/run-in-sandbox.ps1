@@ -85,13 +85,16 @@ try {
 $wasRunning = -not $proc.HasExited
 if ($wasRunning) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
+$passed = $false
 if (-not $wasRunning) {
     Say "VERDICT: the app exited during the test"
 } elseif ($backend -eq 'OpenGL') {
     Say "VERDICT: runs on a clean Windows with the 3D preview"
+    $passed = $true
 } elseif ($backend -eq 'built-in drawing') {
     Say "VERDICT: runs, but WITHOUT the 3D - the bundled OpenGL did not load here"
 } else {
     Say "VERDICT: did not start, or never reported a preview backend"
 }
 Say "done - close the sandbox; results are in the mapped folder"
+if (-not $passed) { exit 1 }
