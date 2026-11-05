@@ -278,6 +278,16 @@ def hex_to_rgb(hx):
     return int(hx[0:2],16), int(hx[2:4],16), int(hx[4:6],16)
 def rgb_to_hex(rgb): r,g,b=[clamp(v) for v in rgb]; return f"#{r:02x}{g:02x}{b:02x}"
 
+def parse_auto_sleep_minutes(text, fallback=30):
+    """Whole minutes (at least 1) from the Auto Sleep box. Empty means 30; text that is not a number keeps the fallback."""
+    raw = str(text).strip()
+    if not raw:
+        return 30
+    try:
+        return max(1, int(float(raw)))
+    except (ValueError, OverflowError):
+        return fallback
+
 
 # --------------------------- Backend ---------------------------
 class Backend:
@@ -2250,8 +2260,12 @@ class App(tk.Tk):
 
     # ---- Options ----
     def on_options(self):
+        saved = CFG.get("auto_sleep", {}).get("minutes", 30)
+        minutes = parse_auto_sleep_minutes(self.as_min.get(), saved if isinstance(saved, int) and saved >= 1 else 30)
+        # Show the value that was kept, so a typo does not look like a saved setting.
+        self.as_min.delete(0, "end"); self.as_min.insert(0, str(minutes))
         CFG["auto_sleep"]={"enabled": bool(self.as_var.get()),
-                           "minutes": int(self.as_min.get() or 30),
+                           "minutes": minutes,
                            "action": "off" if self.as_action.get() in (self.s["as_off"], "Off") else "solid"}
         save_cfg(CFG)
 

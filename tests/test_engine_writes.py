@@ -13,6 +13,8 @@ not timing. No hardware is needed.
   Manual loop lands the final colour, so the drag cannot flood the link.
 - The config is written at most once a second while a slider or picker is
   dragged, and the final value is written on quit.
+- The Auto Sleep minutes box keeps a typed value only when it is a number.
+  Anything else keeps the saved value instead of dropping the setting.
 """
 import sys
 import time
@@ -147,6 +149,22 @@ class ConfigWriteTests(unittest.TestCase):
             self.assertEqual(save.call_count, 0)
             dp.flush_cfg(force=True)
             self.assertEqual(save.call_count, 1)
+
+
+class AutoSleepMinutesTests(unittest.TestCase):
+    def test_typed_minutes_are_whole_numbers_of_at_least_one(self):
+        parse = dp.parse_auto_sleep_minutes
+        self.assertEqual(parse("45", 30), 45)
+        self.assertEqual(parse(" 20 ", 30), 20)
+        self.assertEqual(parse("1.5", 30), 1)
+        self.assertEqual(parse("0", 30), 1)
+        self.assertEqual(parse("-3", 30), 1)
+        self.assertEqual(parse("", 30), 30)
+
+    def test_text_that_is_not_a_number_keeps_the_saved_value(self):
+        parse = dp.parse_auto_sleep_minutes
+        for text in ("30 min", "abc", "nan", "inf", "1e400"):
+            self.assertEqual(parse(text, 15), 15, repr(text))
 
 
 if __name__ == "__main__":
