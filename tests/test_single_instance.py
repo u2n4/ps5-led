@@ -13,8 +13,10 @@ get ERROR_ALREADY_EXISTS in the way that matters here.
 """
 import ctypes
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +53,28 @@ class TestSingleInstance(unittest.TestCase):
         # must be allowed -- otherwise the test above passes for a mutex that
         # is simply always taken (a leak from an earlier process, say).
         self.assertEqual(_ask_child(), "SECOND_COPY_ALLOWED")
+
+    def test_stop_reaches_the_background_copy_while_it_holds_the_mutex(self):
+        # The Stop shortcut runs `dualled_pro.py --stop`. While a background
+        # copy holds the mutex that launch must still write the stop signal,
+        # not restore that copy's window and exit.
+        import dualled_pro
+        if not dualled_pro._acquire_global_mutex():
+            self.skipTest("another PS5 LED copy is running; this test needs the mutex")
+        appdata = tempfile.mkdtemp(prefix="ps5led-stop-")
+        try:
+            env = dict(os.environ, APPDATA=appdata)
+            proc = subprocess.run([sys.executable, os.path.join(REPO, "dualled_pro.py"), "--stop"],
+                                  cwd=REPO, env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(os.path.exists(os.path.join(appdata, "DualLED_Pro", "stop.signal")),
+                            "--stop wrote no stop signal while a copy held the mutex")
+        finally:
+            handle = dualled_pro._win_handles.pop("mutex", None)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+            shutil.rmtree(appdata, ignore_errors=True)
 
 
 if __name__ == "__main__":

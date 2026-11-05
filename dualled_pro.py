@@ -2401,5 +2401,10 @@ def run_main():
         log("FATAL:", e)
 
 if __name__ == "__main__":
-    if main():
+    # --stop must not take the single-instance lock. The lock is held by the
+    # background copy it is meant to stop, so main() would bring that copy's
+    # window forward and exit before --stop was ever read.
+    if "--stop" in sys.argv[1:]:
+        run_main()
+    elif main():
         run_main()
