@@ -32,9 +32,14 @@ function Get-PS5LEDDownload {
 function New-PS5LEDShortcut {
     param([string]$Executable, [string]$WorkingDirectory)
     # CreateShortcut().Save() fails in a non-ASCII folder, so the .lnk is saved in this user's own TEMP.
-    # If TEMP is not ASCII, its 8.3 short path is used. No shared folder is ever used: without an ASCII
-    # private folder the shortcut is skipped with a warning, and the install still succeeds.
-    $folder = $env:TEMP
+    # That TEMP must sit inside the user's profile: a shared TEMP would let another account swap the file.
+    # If it is not ASCII, its 8.3 short path is used. Without such a folder the shortcut is skipped with a warning.
+    $userRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\') + '\'
+    $folder = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+    if (-not $folder.StartsWith($userRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Warning "TEMP is outside your profile, so it may be shared. The desktop shortcut was skipped; PS5 LED is still installed."
+        return
+    }
     if ($folder -match '[^\x00-\x7F]') {
         if (-not ('PS5LED.ShortPath' -as [type])) {
             Add-Type -Namespace PS5LED -Name ShortPath -MemberDefinition @'
@@ -53,6 +58,7 @@ public static extern uint GetShortPathName(string longPath, System.Text.StringBu
     $desktop = [Environment]::GetFolderPath("Desktop")
     $temporary = Join-Path $folder ("ps5led-" + [guid]::NewGuid().ToString("N") + ".lnk")
     $sibling = Join-Path $desktop ("PS5 LED-" + [guid]::NewGuid().ToString("N") + ".tmp")
+    $target = Join-Path $desktop "PS5 LED.lnk"
     try {
         $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($temporary)
         $shortcut.TargetPath = $Executable
@@ -60,9 +66,12 @@ public static extern uint GetShortPathName(string longPath, System.Text.StringBu
         $shortcut.IconLocation = "$Executable,0"
         $shortcut.Description = "PS5 LED - PS5/PS4 RGB lightbar control"
         $shortcut.Save()
-        # Copy to a sibling name, then move over the old shortcut. A failed copy leaves the old one as it was.
+        # Copy to a sibling name first. A failed copy leaves the old shortcut as it was.
         Copy-Item -LiteralPath $temporary -Destination $sibling
-        Move-Item -LiteralPath $sibling -Destination (Join-Path $desktop "PS5 LED.lnk") -Force
+        # Move-Item -Force deletes the old file before it moves, so a failed move would lose it.
+        # File.Replace swaps the file in one step and keeps the old one if the swap fails.
+        if (Test-Path -LiteralPath $target) { [IO.File]::Replace($sibling, $target, [NullString]::Value) }
+        else { Move-Item -LiteralPath $sibling -Destination $target }
     } finally {
         Remove-Item -LiteralPath $temporary, $sibling -Force -ErrorAction SilentlyContinue
     }
