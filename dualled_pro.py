@@ -13,7 +13,7 @@ PS5 LED — v2 (DualSense SVG Edition)
 import os, re, sys, atexit, platform, math, random, json, time, threading, colorsys, argparse, traceback, datetime, zlib, queue
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 # --------------------------- Paths / Config ---------------------------
 APP_NAME = "DualLED_Pro"
@@ -1083,7 +1083,7 @@ STR = {
    "pick_color":"اختيار لون","stop":"إيقاف","quick":"ألوان سريعة",
    "background":"تشغيل في الخلفية","close":"إغلاق",
    "rgb_fix":"تصحيح RGB/BGR",
-   "profiles":"ملفات التعريف","save_profile":"حفظ","delete_profile":"حذف",
+   "profiles":"ملفات التعريف","save_profile":"حفظ","delete_profile":"حذف","export_profiles":"تصدير الملفات","import_profiles":"استيراد الملفات","profiles_exported":"تم تصدير {n} ملف تعريف.","profiles_imported":"تم استيراد ملفات التعريف: {added} جديد، و{replaced} استُبدل.",
    "auto_sleep":"خمول تلقائي","as_minutes":"دقائق","as_action":"الإجراء","as_off":"إطفاء","as_solid":"تثبيت",
    "status_manual":"الحالة: يدوي","status_sequence":"الحالة: تتابع (فاصل {v:.1f}s)",
    "status_random":"الحالة: عشوائي (فاصل {v:.1f}s)","status_rainbow":"الحالة: قوس قزح (دورة {v:.1f}s، سطوع {b:.2f})",
@@ -1107,7 +1107,7 @@ STR = {
    "pick_color":"Pick Color","stop":"Stop","quick":"Quick Colors",
    "background":"Run in background","close":"Close",
    "rgb_fix":"RGB/BGR mapping fix",
-   "profiles":"Profiles","save_profile":"Save","delete_profile":"Delete",
+   "profiles":"Profiles","save_profile":"Save","delete_profile":"Delete","export_profiles":"Export profiles","import_profiles":"Import profiles","profiles_exported":"Exported {n} profile(s).","profiles_imported":"Imported profiles: {added} added, {replaced} replaced.",
    "auto_sleep":"Auto Sleep","as_minutes":"Minutes","as_action":"Action","as_off":"Off","as_solid":"Solid",
    "status_manual":"Status: Manual","status_sequence":"Status: Sequence (interval {v:.1f}s)",
    "status_random":"Status: Random (interval {v:.1f}s)","status_rainbow":"Status: Rainbow (cycle {v:.1f}s, brightness {b:.2f})",
@@ -1749,6 +1749,8 @@ class App(tk.Tk):
         self.prof_cb.pack(side="left")
         ttk.Button(prow, text=self.s["save_profile"], style="Btn.TButton", command=self.save_profile).pack(side="left", padx=8)
         ttk.Button(prow, text=self.s["delete_profile"], style="Btn.TButton", command=self.delete_profile).pack(side="left", padx=8)
+        ttk.Button(prow, text=self.s["export_profiles"], style="Btn.TButton", command=self.export_profiles_gui).pack(side="left", padx=4)
+        ttk.Button(prow, text=self.s["import_profiles"], style="Btn.TButton", command=self.import_profiles_gui).pack(side="left", padx=4)
         self.prof_cb.bind("<<ComboboxSelected>>", lambda e: self.load_profile(self.prof_var.get()))
 
         # خمول تلقائي
@@ -2195,6 +2197,8 @@ class App(tk.Tk):
                 button_translations = {
                     ("حفظ", "Save"): self.s["save_profile"],
                     ("حذف", "Delete"): self.s["delete_profile"],
+                    ("تصدير الملفات", "Export profiles"): self.s["export_profiles"],
+                    ("استيراد الملفات", "Import profiles"): self.s["import_profiles"],
                     ("إيقاف", "Stop"): self.s["stop"],
                     ("اختيار لون", "Pick Color"): self.s["pick_color"],
                     ("تشغيل في الخلفية", "Run in background"): self.s["background"],
@@ -2256,6 +2260,28 @@ class App(tk.Tk):
             CFG["profiles"].pop(name, None); save_cfg(CFG)
             self.prof_cb.configure(values=list(CFG.get("profiles",{}).keys()))
             self.prof_cb.set("Default")
+
+    def export_profiles_gui(self):
+        path = filedialog.asksaveasfilename(parent=self, title=self.s["export_profiles"], defaultextension=".json",
+                                            initialfile="ps5led-profiles.json",
+                                            filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not path: return
+        try:
+            count = write_profile_file(path, CFG.get("profiles", {}))
+        except ProfileFileError as e:
+            messagebox.showerror(self.s["export_profiles"], str(e), parent=self); return
+        messagebox.showinfo(self.s["export_profiles"], self.s["profiles_exported"].format(n=count), parent=self)
+
+    def import_profiles_gui(self):
+        path = filedialog.askopenfilename(parent=self, title=self.s["import_profiles"],
+                                          filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not path: return
+        try:
+            added, replaced = import_profile_file_into_settings(path)
+        except ProfileFileError as e:
+            messagebox.showerror(self.s["import_profiles"], str(e), parent=self); return
+        self.prof_cb.configure(values=list(CFG.get("profiles", {}).keys()))
+        messagebox.showinfo(self.s["import_profiles"], self.s["profiles_imported"].format(added=added, replaced=replaced), parent=self)
 
     # ---- Options ----
     def on_options(self):
@@ -2381,6 +2407,224 @@ class App(tk.Tk):
             except Exception:
                 pass
 
+# --------------------------- Profile files ---------------------------
+PROFILE_FILE_FORMAT    = "ps5led-profiles"
+PROFILE_FILE_VERSION   = 1
+PROFILE_FILE_MAX_BYTES = 1_000_000
+PROFILE_NAME_MAX       = 40
+# The same ranges as the window's sliders, so every profile the window can save can also be exported.
+_PROFILE_RANGES = {"speed": (0.1, 5.0), "rainbow_brightness": (0.2, 1.0), "flash_duty": (0.1, 0.9)}
+_PROFILE_FIELDS = ("mode", "speed", "rainbow_brightness", "flash_duty", "color")
+_PROFILE_HEX    = re.compile(r"#[0-9a-fA-F]{6}")
+
+class ProfileFileError(ValueError):
+    """A profile file or saved profile that cannot be used. str(error) is the message to show."""
+
+def _profile_name(name):
+    if not isinstance(name, str) or not name.strip():
+        raise ProfileFileError("A profile name is empty.")
+    if len(name) > PROFILE_NAME_MAX:
+        raise ProfileFileError(f"Profile name '{name[:20]}...' is longer than {PROFILE_NAME_MAX} characters.")
+    if any(ord(ch) < 32 for ch in name):
+        raise ProfileFileError(f"Profile name {name!r} contains a control character.")
+    return name
+
+def _profile_data(name, data):
+    """Check one profile and return it in the stored form. Raises ProfileFileError naming the problem."""
+    where = f"Profile '{name}'"
+    if not isinstance(data, dict):
+        raise ProfileFileError(f"{where} is not an object.")
+    for key in data:
+        if key not in _PROFILE_FIELDS:
+            raise ProfileFileError(f"{where} has an unknown field '{key}'.")
+    for key in _PROFILE_FIELDS:
+        if key not in data:
+            raise ProfileFileError(f"{where} is missing '{key}'.")
+    if data["mode"] not in MODE_CODE:
+        raise ProfileFileError(f"{where} has an unknown mode {data['mode']!r}.")
+    colour = data["color"]
+    if not isinstance(colour, str) or not _PROFILE_HEX.fullmatch(colour):
+        raise ProfileFileError(f"{where} has a colour that is not #rrggbb: {colour!r}.")
+    clean = {"mode": data["mode"]}
+    for key, (low, high) in _PROFILE_RANGES.items():
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ProfileFileError(f"{where} has a {key} that is not a number.")
+        if not low <= value <= high:
+            raise ProfileFileError(f"{where} has {key} {value:g}; it must be from {low:g} to {high:g}.")
+        clean[key] = float(value)
+    clean["color"] = colour.lower()
+    return clean
+
+def _profiles_checked(profiles):
+    """Check every profile. Returns {name: profile} in the stored form."""
+    if not isinstance(profiles, dict):
+        raise ProfileFileError("The saved profiles are not an object.")
+    return {_profile_name(name): _profile_data(name, data) for name, data in profiles.items()}
+
+def read_profile_file(path):
+    """Read and check a profile file. Returns {name: profile}. Raises ProfileFileError and nothing else."""
+    try:
+        if os.path.getsize(path) > PROFILE_FILE_MAX_BYTES:
+            raise ProfileFileError(f"{path} is larger than {PROFILE_FILE_MAX_BYTES // 1000} KB. A profile file is much smaller.")
+        raw = Path(path).read_bytes()
+    except OSError as e:
+        raise ProfileFileError(f"Cannot read {path}: {e.strerror or e}.") from e
+    try:
+        doc = json.loads(raw.decode("utf-8-sig"))
+    except UnicodeDecodeError as e:
+        raise ProfileFileError(f"{path} is not UTF-8 text.") from e
+    except json.JSONDecodeError as e:
+        raise ProfileFileError(f"{path} is not valid JSON (line {e.lineno}, column {e.colno}): {e.msg}.") from e
+    except RecursionError as e:
+        raise ProfileFileError(f"{path} is nested too deeply to be a profile file.") from e
+    if not isinstance(doc, dict):
+        raise ProfileFileError(f"{path} is not a profile file: the top level must be a JSON object.")
+    if doc.get("format") != PROFILE_FILE_FORMAT:
+        raise ProfileFileError(f'{path} is not a PS5 LED profile file: "format" must be "{PROFILE_FILE_FORMAT}".')
+    version = doc.get("version")
+    if type(version) is not int or version != PROFILE_FILE_VERSION:
+        raise ProfileFileError(f"{path} has version {version!r}. This program reads version {PROFILE_FILE_VERSION}.")
+    profiles = doc.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise ProfileFileError(f"{path} contains no profiles.")
+    return _profiles_checked(profiles)
+
+def write_profile_file(path, profiles):
+    """Write the saved profiles to path and return how many were written. Raises ProfileFileError."""
+    checked = _profiles_checked(profiles)
+    if not checked:
+        raise ProfileFileError("There are no saved profiles to export.")
+    doc = {"format": PROFILE_FILE_FORMAT, "version": PROFILE_FILE_VERSION, "profiles": checked}
+    try:
+        Path(path).write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        raise ProfileFileError(f"Cannot write {path}: {e.strerror or e}.") from e
+    return len(checked)
+
+def import_profile_file_into_settings(path):
+    """Check a profile file, then merge its profiles into the saved settings. Returns (added, replaced)."""
+    incoming = read_profile_file(path)  # raises before anything is changed
+    saved = CFG.setdefault("profiles", {})
+    added = sum(1 for name in incoming if name not in saved)
+    saved.update(incoming)
+    save_cfg(CFG)
+    return added, len(incoming) - added
+
+# --------------------------- Headless CLI ---------------------------
+# How long --color and --profile wait for a controller to accept the colour.
+CLI_CONNECT_TIMEOUT_S = 20.0
+
+def _cli_colour(text):
+    value = text.strip()
+    if not re.fullmatch(r"#?[0-9a-fA-F]{6}", value):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a colour. Use six hex digits, such as ff8800 or #ff8800.")
+    return "#" + value.lstrip("#").lower()
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(prog="dualled_pro.py",
+                                     description="PS5 LED. With no options, the app window opens.")
+    parser.add_argument("--background", action="store_true", help="run without UI (uses last settings)")
+    parser.add_argument("--stop-after", type=float, default=None, help="auto stop after N minutes (background)")
+    parser.add_argument("--off-on-exit", action="store_true", help="turn off lightbar when exiting (background)")
+    parser.add_argument("--keep-on-exit", action="store_true", help="keep the lightbar color when the background process exits")
+    parser.add_argument("--stop", action="store_true", help="signal a running --background instance to stop, then exit")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--color", type=_cli_colour, metavar="RRGGBB", help="set the lightbar to this colour, then exit (no window)")
+    action.add_argument("--profile", metavar="NAME", help="set the lightbar to a saved profile's colour, then exit (no window)")
+    action.add_argument("--export-profiles", metavar="FILE", help="write the saved profiles to a JSON file, then exit")
+    action.add_argument("--import-profiles", metavar="FILE", help="merge the profiles in a JSON file into the saved settings, then exit")
+    return parser
+
+def parse_cli(argv):
+    """Parse the command line. args.headless is True when one of the actions runs without the window."""
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    args.headless = any(v is not None for v in (args.color, args.profile, args.export_profiles, args.import_profiles))
+    background_only = (args.background or args.stop or args.off_on_exit or args.keep_on_exit
+                       or args.stop_after is not None)
+    if args.headless and background_only:
+        parser.error("--color, --profile, --export-profiles and --import-profiles cannot be combined with "
+                     "--background, --stop, --stop-after, --off-on-exit or --keep-on-exit")
+    return args
+
+def _cli_fail(message):
+    print(f"error: {message}", file=sys.stderr)
+    return 1
+
+def _apply_colour_headless(rgb):
+    """Show rgb on the first controller that accepts it. Returns 0, or 1 if none does within the timeout."""
+    backend = Backend("auto")
+    try:
+        wire = backend.wire_rgb(rgb)
+        # Backend() recorded the saved colour. Record the requested one before connecting, so the write
+        # sent on connection carries it and the lightbar never shows the saved colour first.
+        backend.set_color(*rgb)
+        backend.connect()
+        deadline = time.monotonic() + CLI_CONNECT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            snap = backend.snapshot()
+            if snap["connected"] and snap["applied_rgb"] == wire:
+                print("Lightbar set to #%02x%02x%02x." % tuple(rgb))
+                return 0
+            time.sleep(0.1)
+        return _cli_fail(f"no controller accepted the colour within {CLI_CONNECT_TIMEOUT_S:g} seconds. "
+                         "Connect a DualSense or DualShock 4 and try again.")
+    finally:
+        backend.close()
+
+def run_headless(args):
+    """Run the one action parse_cli() chose. Returns the exit code: 0 when done, 1 when it failed."""
+    if args.export_profiles is not None:
+        try:
+            count = write_profile_file(args.export_profiles, CFG.get("profiles", {}))
+        except ProfileFileError as e:
+            return _cli_fail(str(e))
+        print(f"Exported {count} profile(s) to {args.export_profiles}.")
+        return 0
+    # The running app owns the controller and the saved settings. A second writer would fight it for both.
+    if os.name == "nt" and not _acquire_global_mutex():
+        return _cli_fail("PS5 LED is already running. Close it, then run this command again.")
+    if args.import_profiles is not None:
+        try:
+            added, replaced = import_profile_file_into_settings(args.import_profiles)
+        except ProfileFileError as e:
+            return _cli_fail(str(e))
+        print(f"Imported profiles from {args.import_profiles}: {added} added, {replaced} replaced.")
+        return 0
+    if os.name != "nt":
+        return _cli_fail("setting the lightbar needs Windows, where the controller is reached through HID.")
+    if args.profile is not None:
+        saved = CFG.get("profiles", {})
+        if args.profile not in saved:
+            return _cli_fail(f"there is no saved profile named '{args.profile}'. "
+                             f"Saved profiles: {', '.join(saved) or 'none'}.")
+        try:
+            profile = _profile_data(args.profile, saved[args.profile])
+        except ProfileFileError as e:
+            return _cli_fail(str(e))
+        if profile["mode"] != "Manual":
+            print(f"Note: profile '{args.profile}' uses the {profile['mode']} mode. "
+                  "Only its colour is set here; animations run in the app.")
+        rgb = hex_to_rgb(profile["color"])
+    else:
+        rgb = hex_to_rgb(args.color)
+    return _apply_colour_headless(rgb)
+
+def dispatch(argv):
+    """Entry point. A headless action returns its exit code. Without one, the app starts as before."""
+    args = parse_cli(argv)
+    if args.headless:
+        return run_headless(args)
+    # --stop must not take the single-instance lock. The lock is held by the
+    # background copy it is meant to stop, so main() would bring that copy's
+    # window forward and exit before --stop was ever read.
+    if args.stop:
+        run_main(args)
+    elif main():
+        run_main(args)
+    return 0
+
 # --------------------------- Main ---------------------------
 
 def main():
@@ -2410,15 +2654,8 @@ def main():
     atexit.register(release_slot_lock)
     return True
 
-def run_main():
+def run_main(args):
     """تشغيل التطبيق مع معالجة المعاملات (سياق أصلي)"""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--background", action="store_true", help="run without UI (uses last settings)")
-    parser.add_argument("--stop-after", type=float, default=None, help="auto stop after N minutes (background)")
-    parser.add_argument("--off-on-exit", action="store_true", help="turn off lightbar when exiting (background)")
-    parser.add_argument("--keep-on-exit", action="store_true", help="keep the lightbar color when the background process exits")
-    parser.add_argument("--stop", action="store_true", help="signal a running --background instance to stop, then exit")
-    args = parser.parse_args()
 
     if args.stop:
         # Tell a running background instance to shut down (used by the Stop shortcut).
@@ -2442,10 +2679,4 @@ def run_main():
         log("FATAL:", e)
 
 if __name__ == "__main__":
-    # --stop must not take the single-instance lock. The lock is held by the
-    # background copy it is meant to stop, so main() would bring that copy's
-    # window forward and exit before --stop was ever read.
-    if "--stop" in sys.argv[1:]:
-        run_main()
-    elif main():
-        run_main()
+    sys.exit(dispatch(sys.argv[1:]))
