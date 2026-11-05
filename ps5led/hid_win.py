@@ -79,6 +79,10 @@ class HidError(OSError):
     """A HID operation failed; the message carries the Win32 error."""
 
 
+class HidCapabilityError(HidError):
+    """An interface has no HID capabilities, so the driver cannot describe it."""
+
+
 class GUID(ctypes.Structure):
     _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
                 ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
@@ -217,15 +221,18 @@ def _interface_paths():
     return paths
 
 
-def _describe(handle, path):
+def _describe(handle, path, vendor_id=None):
     attrs = HIDD_ATTRIBUTES()
     attrs.Size = ctypes.sizeof(attrs)
     if not _hid.HidD_GetAttributes(handle, ctypes.byref(attrs)):
         raise HidError("HidD_GetAttributes failed for %s: Win32 error %d"
                        % (path, ctypes.get_last_error()))
+    if vendor_id is not None and attrs.VendorID != vendor_id:
+        return None
     preparsed = ctypes.c_void_p()
     if not _hid.HidD_GetPreparsedData(handle, ctypes.byref(preparsed)):
-        return None
+        raise HidCapabilityError("%s: HidD_GetPreparsedData failed, Win32 error %d"
+                                 % (path, ctypes.get_last_error()))
     caps = HIDP_CAPS()
     try:
         status = _hid.HidP_GetCaps(preparsed, ctypes.byref(caps))
@@ -235,7 +242,7 @@ def _describe(handle, path):
         # caps is still zero-filled. Reporting input_length=0 would hand
         # HidDevice.open a device whose every read asks for zero bytes and can
         # never return data, with no error anywhere in the chain.
-        return None
+        raise HidCapabilityError("%s: HidP_GetCaps returned %#x" % (path, status & 0xFFFFFFFF))
     name = ctypes.create_unicode_buffer(128)
     _hid.HidD_GetProductString(handle, name, ctypes.sizeof(name))
     return DeviceInfo(
@@ -252,8 +259,14 @@ def _describe(handle, path):
 
 def enumerate_devices(vendor_id=None):
     # type: (Optional[int]) -> List[DeviceInfo]
-    """Every present HID interface, optionally filtered by vendor."""
+    """Every present HID interface, optionally filtered by vendor.
+
+    An interface of the wanted vendor that has no HID capabilities is not
+    returned. If no usable interface of that vendor is found, HidError says why,
+    so the caller can report it instead of seeing an empty list.
+    """
     found = []
+    undescribed = []
     for path in _interface_paths():
         # dwDesiredAccess = 0: HidD_GetAttributes, HidP_GetCaps and
         # HidD_GetProductString all work on a handle with no access rights.
@@ -267,14 +280,19 @@ def enumerate_devices(vendor_id=None):
         if not handle or handle == INVALID_HANDLE_VALUE:
             continue
         try:
-            info = _describe(handle, path)
+            info = _describe(handle, path, vendor_id)
+        except HidCapabilityError as exc:
+            undescribed.append(str(exc))
+            info = None
         except HidError:
-            # Interfaces whose attributes cannot be read are not listed.
+            # Attributes that cannot be read leave the vendor unknown, so the interface is not listed.
             info = None
         finally:
             _kernel32.CloseHandle(handle)
-        if info and (vendor_id is None or info.vendor_id == vendor_id):
+        if info:
             found.append(info)
+    if vendor_id is not None and not found and undescribed:
+        raise HidError("no usable HID interface: " + "; ".join(undescribed))
     return found
 
 
@@ -338,10 +356,7 @@ class HidDevice(object):
         if not handle or handle == INVALID_HANDLE_VALUE:
             raise HidError("cannot open %s: Win32 error %d" % (path, ctypes.get_last_error()))
         try:
-            info = _describe(handle, path)
-            if info is None:
-                raise HidError("cannot read capabilities for %s" % path)
-            return cls(handle, info)
+            return cls(handle, _describe(handle, path))
         except BaseException:
             _kernel32.CloseHandle(handle)
             raise
